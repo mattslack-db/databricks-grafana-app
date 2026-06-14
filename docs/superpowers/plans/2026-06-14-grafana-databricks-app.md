@@ -587,6 +587,46 @@ Not unit-tested (process orchestration); validated by Task 10 local boot. Keep f
 
 ---
 
+## Task 8.5: Autoscaling Lakebase reconciliation (TDD) — ADDED 2026-06-14
+
+The instance was provisioned on the **Autoscaling** tier, not the provisioned
+`databricks database` tier Tasks 2–3 assumed. See the spec addendum. Rework the
+three affected modules to the verified autoscaling SDK API. Provisioned facts:
+endpoint path `projects/grafana-app/branches/production/endpoints/primary`, host
+`ep-lucky-tree-d25raxtv.database.us-east-1.cloud.databricks.com:5432`, DB `grafana`,
+PG 17, user = Databricks identity (SP app-id at runtime; email locally).
+
+**Files:** `lib/lakebase.py`, `lib/config.py`, `lib/grafana_env.py` + their tests.
+
+- [ ] **Step 1: Update `tests/test_lakebase.py`** to the autoscaling API. Fake client exposes `client.postgres.get_endpoint(name)` → object with `.status.hosts.host`, and `client.postgres.generate_database_credential(endpoint)` → object with `.token`. Assert `resolve_endpoint(client, endpoint_path)` reads `.status.hosts.host` + port 5432, and `mint_token(client, endpoint_path)` returns the token.
+- [ ] **Step 2: Run, expect FAIL.**
+- [ ] **Step 3: Reimplement `lib/lakebase.py`:**
+
+```python
+from __future__ import annotations
+from dataclasses import dataclass
+
+@dataclass(frozen=True)
+class LakebaseEndpoint:
+    host: str
+    port: int
+
+def resolve_endpoint(client, endpoint_path: str) -> LakebaseEndpoint:
+    ep = client.postgres.get_endpoint(endpoint_path)
+    return LakebaseEndpoint(host=ep.status.hosts.host, port=5432)
+
+def mint_token(client, endpoint_path: str) -> str:
+    return client.postgres.generate_database_credential(endpoint_path).token
+```
+
+- [ ] **Step 4: Update `lib/config.py` + `tests/test_config.py`:** replace `instance_name` with `endpoint_path` (required env `LAKEBASE_ENDPOINT_PATH`), keep `database_name`, keep `db_user` (now the Databricks identity — env `LAKEBASE_DB_USER`), add optional `LAKEBASE_HOST` override (when set, `startup.py` may skip `resolve_endpoint`). Update tests + BASE_ENV accordingly.
+- [ ] **Step 5: Update `lib/grafana_env.py` + test:** `render_lakebase_datasource` sets `postgresVersion: 1700`. Update the test assertion.
+- [ ] **Step 6: Update `startup.py`** call sites: pass `cfg.endpoint_path` to `mint_token`/`resolve_endpoint`; host from `cfg.host` if set else `resolve_endpoint`. (Integration; verified by Task 10.)
+- [ ] **Step 7: Run full suite, expect PASS;** `python -c "import startup"`.
+- [ ] **Step 8: Commit** — `git commit -m "refactor: reconcile lakebase modules to autoscaling postgres API"`
+
+---
+
 ## Task 10: Local end-to-end boot + rotation test (integration)
 
 **Files:**
