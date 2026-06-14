@@ -16,8 +16,11 @@ def refresh_once(state: RefreshState, mint, write_server_cred, reload) -> None:
         log.exception("token mint failed; keeping last-good token")
         return
     write_server_cred(token)
-    reload()
+    # Track the on-disk state: PgBouncer reads the ini, so last_good_token must
+    # reflect the disk write — not the reload's success. A relaunch after a
+    # failed reload still needs the token that is actually on disk.
     state.last_good_token = token
+    reload()
 
 def run_loop(state: RefreshState, mint, write_server_cred, reload,
              interval_s: int, stop: threading.Event) -> None:

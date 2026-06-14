@@ -142,16 +142,9 @@ fi
 
 PGBOUNCER_DEST="${BIN_DIR}/pgbouncer"
 
-if already_ok "${PGBOUNCER_DEST}" "${PGBOUNCER_SHA256}"; then
-    # NOTE: already_ok checks the .deb sha against the binary path — not useful
-    # here since the dest is the extracted binary, not the .deb.  We do a
-    # simpler existence + version check instead.
-    :  # fall through to the real idempotency check below
-fi
-
-# Idempotency for the extracted binary: check that it exists and is executable.
-# We can't checksum the binary against the .deb SHA256 (those are different
-# files), so we re-verify via the .deb cache if available.
+# Idempotency for the extracted binary: the dest is the extracted binary, not
+# the .deb, so we can't checksum it against PGBOUNCER_SHA256 directly. Instead
+# we cache the verified .deb and re-verify that on subsequent runs.
 PGBOUNCER_DEB_CACHE="${BIN_DIR}/.pgbouncer_${PGBOUNCER_VERSION}.deb"
 
 if [[ "${FORCE:-0}" != "1" ]] && [[ -x "${PGBOUNCER_DEST}" ]] && \

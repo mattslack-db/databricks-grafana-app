@@ -70,27 +70,40 @@ PSQL_BINARY = os.environ.get("PSQL_BINARY", "psql")
 # write_server_cred — rewrites password= in [databases] line, preserves 0600
 # ---------------------------------------------------------------------------
 
-def write_server_cred(tok: str, ini_path: str = PGBOUNCER_INI_PATH) -> None:
+# Relaunch crash-loop ceiling: if PgBouncer dies more than this many times
+# within the window, give up and exit non-zero so the platform restarts the app.
+PGB_MAX_RELAUNCHES = 5
+PGB_RELAUNCH_WINDOW_S = 60
+# How long to wait after a launch before deciding the binary came up at all.
+PGB_LAUNCH_SETTLE_S = 0.5
+
+
+def write_server_cred(tok: str, ini_path: str, ini_lock: threading.Lock) -> None:
     """Rewrite the password= value on the [databases] connection string line.
 
     This function is called by the refresher thread on every token rotation.
     It rewrites only the password= field so as not to disturb other ini content.
     The file permissions are preserved at 0600 (set at initial write; re-applied
     here defensively in case an umask race widens them).
+
+    The ini_lock serialises this write against the supervisor's relaunch
+    re-render and shutdown teardown so the ini file is never read or written
+    mid-tear.
     """
-    path = Path(ini_path)
-    content = path.read_text()
+    with ini_lock:
+        path = Path(ini_path)
+        content = path.read_text()
 
-    # Match the [databases] section line that contains password=<value>.
-    # The pattern targets only the password= token within the db connstring line.
-    new_content = re.sub(r"(password=)[^\s]+", rf"\g<1>{tok}", content, count=1)
+        # Match the [databases] section line that contains password=<value>.
+        # The pattern targets only the password= token within the db connstring line.
+        new_content = re.sub(r"(password=)[^\s]+", rf"\g<1>{tok}", content, count=1)
 
-    if new_content == content:
-        log.warning("write_server_cred: password= pattern not found in %s; "
-                    "ini may be malformed", ini_path)
+        if new_content == content:
+            log.warning("write_server_cred: password= pattern not found in %s; "
+                        "ini may be malformed", ini_path)
 
-    path.write_text(new_content)
-    os.chmod(ini_path, 0o600)
+        path.write_text(new_content)
+        os.chmod(ini_path, 0o600)
 
 
 # ---------------------------------------------------------------------------
@@ -200,12 +213,18 @@ def main() -> None:
     # 9. Refresher: shared state so PgBouncer relaunch can use last_good_token.
     state = RefreshState(last_good_token=token)
     stop_event = threading.Event()
+    # Serialises ini writes (refresher) against relaunch re-render / teardown.
+    ini_lock = threading.Lock()
 
     def _write_server_cred(tok: str) -> None:
-        write_server_cred(tok, PGBOUNCER_INI_PATH)
+        write_server_cred(tok, PGBOUNCER_INI_PATH, ini_lock)
 
     def _reload() -> None:
-        pgb_reload(PSQL_BINARY, cfg.pgbouncer_port, cfg.db_user, cfg.database_name)
+        # Admin console auth: reload must authenticate AS the admin identity,
+        # which is client_user/client_pw (admin_users in the ini + userlist.txt
+        # entry both use client_user). PGPASSWORD is set inside pgb_reload.
+        pgb_reload(PSQL_BINARY, cfg.pgbouncer_port, cfg.db_user, client_pw,
+                   cfg.database_name)
 
     refresher_thread = threading.Thread(
         target=run_loop,
@@ -223,20 +242,19 @@ def main() -> None:
     refresher_thread.start()
     log.info("Token refresher thread started (interval=%ds)", cfg.refresh_interval_s)
 
-    # 10. Signal handling: SIGTERM / SIGINT → clean shutdown.
-    def _shutdown(signum: int, _frame) -> None:  # type: ignore[type-arg]
-        log.info("Received signal %d; initiating shutdown", signum)
+    # 10. Signal handling: SIGTERM / SIGINT.
+    #
+    # The handler does the MINIMUM safe work: set stop_event. It does NOT call
+    # sys.exit() and does NOT tear down children — doing so from a signal frame
+    # could fire mid-write of pgbouncer.ini in the refresher thread, tearing the
+    # file. The supervisor loop owns the single teardown path: it sees the flag
+    # at the top of the next tick and runs terminate/wait/kill there.
+    def _on_signal(signum: int, _frame) -> None:  # type: ignore[type-arg]
+        log.info("Received signal %d; requesting shutdown", signum)
         stop_event.set()
-        if grafana_proc.poll() is None:
-            log.info("Terminating Grafana (pid=%d)", grafana_proc.pid)
-            grafana_proc.terminate()
-        if pgbouncer_proc.poll() is None:
-            log.info("Terminating PgBouncer (pid=%d)", pgbouncer_proc.pid)
-            pgbouncer_proc.terminate()
-        sys.exit(0)
 
-    signal.signal(signal.SIGTERM, _shutdown)
-    signal.signal(signal.SIGINT, _shutdown)
+    signal.signal(signal.SIGTERM, _on_signal)
+    signal.signal(signal.SIGINT, _on_signal)
 
     # 11. Supervisor loop.
     #
@@ -245,39 +263,34 @@ def main() -> None:
     #     and propagate its exit code.
     #   - PgBouncer is a support process: if it exits unexpectedly we relaunch it
     #     using state.last_good_token so the re-rendered ini has a valid password.
-    #     We use a nonlocal reference so the signal handler can terminate the
-    #     current pgbouncer_proc even if it has been relaunched.
+    #     A crash-loop ceiling prevents spinning forever on a broken binary.
+    #   - A single teardown path is shared by the signal, Grafana-exit, and
+    #     crash-loop branches. It holds ini_lock so it never races the refresher.
 
-    # Wrap pgbouncer_proc in a mutable container so the closure can rebind it.
+    # Mutable container so the teardown closure always sees the current proc
+    # even after a relaunch rebinds it.
     pgb_state = {"proc": pgbouncer_proc}
+    relaunch_times: list[float] = []
 
-    log.info("Supervisor loop started; waiting on Grafana (pid=%d)", grafana_proc.pid)
-
-    while True:
-        # Poll Grafana.
-        rc = grafana_proc.poll()
-        if rc is not None:
-            log.info("Grafana exited with code %d; shutting down", rc)
+    def _terminate_children() -> None:
+        # Hold ini_lock so we don't race the refresher's write_server_cred.
+        with ini_lock:
             stop_event.set()
-            p = pgb_state["proc"]
-            if p.poll() is None:
-                log.info("Terminating PgBouncer (pid=%d)", p.pid)
-                p.terminate()
-                try:
-                    p.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    log.warning("PgBouncer did not exit cleanly; killing")
-                    p.kill()
-            sys.exit(rc)
+            for name, proc in (("Grafana", grafana_proc), ("PgBouncer", pgb_state["proc"])):
+                if proc.poll() is None:
+                    log.info("Terminating %s (pid=%d)", name, proc.pid)
+                    proc.terminate()
+                    try:
+                        proc.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        log.warning("%s did not exit cleanly; killing", name)
+                        proc.kill()
 
-        # Poll PgBouncer.
-        p = pgb_state["proc"]
-        pgb_rc = p.poll()
-        if pgb_rc is not None:
-            log.warning("PgBouncer (pid=%d) exited unexpectedly with code %d; relaunching",
-                        p.pid, pgb_rc)
-            # Re-render ini with the last successfully minted token (NOT the boot
-            # token, which may have expired if this is a late crash).
+    def _relaunch_pgbouncer() -> subprocess.Popen:
+        # Re-render ini with the last good token (NOT the boot token, which may
+        # have expired if this is a late crash). Guard the ini write with the
+        # lock so it cannot tear against a concurrent refresher write.
+        with ini_lock:
             tok = state.last_good_token
             new_ini = render_ini(
                 listen_port=cfg.pgbouncer_port,
@@ -290,8 +303,49 @@ def main() -> None:
             )
             Path(PGBOUNCER_INI_PATH).write_text(new_ini)
             os.chmod(PGBOUNCER_INI_PATH, 0o600)
-            new_proc = pgb_launch(PGBOUNCER_BINARY, PGBOUNCER_INI_PATH)
-            log.info("PgBouncer relaunched (pid=%d)", new_proc.pid)
+        return pgb_launch(PGBOUNCER_BINARY, PGBOUNCER_INI_PATH)
+
+    log.info("Supervisor loop started; waiting on Grafana (pid=%d)", grafana_proc.pid)
+
+    while True:
+        # Shutdown requested via signal → single teardown path, then exit.
+        if stop_event.is_set():
+            log.info("Shutdown requested; tearing down children")
+            _terminate_children()
+            sys.exit(0)
+
+        # Grafana is primary: its exit drives overall shutdown + exit code.
+        rc = grafana_proc.poll()
+        if rc is not None:
+            log.info("Grafana exited with code %d; shutting down", rc)
+            _terminate_children()
+            sys.exit(rc)
+
+        # PgBouncer is a support process: relaunch on unexpected exit.
+        p = pgb_state["proc"]
+        pgb_rc = p.poll()
+        if pgb_rc is not None:
+            now = time.monotonic()
+            relaunch_times[:] = [t for t in relaunch_times if now - t < PGB_RELAUNCH_WINDOW_S]
+            if len(relaunch_times) >= PGB_MAX_RELAUNCHES:
+                log.error("PgBouncer crash-looped (%d relaunches within %ds); "
+                          "giving up so the platform can restart the app",
+                          len(relaunch_times), PGB_RELAUNCH_WINDOW_S)
+                _terminate_children()
+                sys.exit(1)
+
+            log.warning("PgBouncer (pid=%d) exited unexpectedly with code %d; relaunching",
+                        p.pid, pgb_rc)
+            relaunch_times.append(now)
+            new_proc = _relaunch_pgbouncer()
+
+            # Detect a binary that died instantly — don't claim success on a corpse.
+            time.sleep(PGB_LAUNCH_SETTLE_S)
+            if new_proc.poll() is not None:
+                log.error("PgBouncer relaunch (pid=%d) died immediately with code %s",
+                          new_proc.pid, new_proc.poll())
+            else:
+                log.info("PgBouncer relaunched (pid=%d)", new_proc.pid)
             pgb_state["proc"] = new_proc
 
         time.sleep(1)

@@ -18,3 +18,19 @@ def test_render_ini_points_at_lakebase_with_ssl_and_short_lifetime():
     assert "password=tok-123" in ini
     assert "server_lifetime = 1800" in ini
     assert "auth_type" in ini
+
+
+def test_admin_user_matches_userlist_entry_for_reload_auth():
+    # The reload() admin console auth must use an identity that is BOTH listed
+    # in admin_users (pgbouncer.ini) AND present in userlist.txt. Both are keyed
+    # on client_user, so they must agree for RELOAD/RECONNECT to authenticate.
+    client_user = "grafana_local"
+    client_pw = "loopback-pw"
+    ini = render_ini(
+        listen_port=6432, db_name="grafana",
+        server_host="h.example.com", server_port=5432,
+        server_user="grafana_sp", server_token="tok-123",
+        client_user=client_user)
+    userlist = render_userlist(client_user, client_pw)
+    assert f"admin_users = {client_user}" in ini
+    assert f'"{client_user}"' in userlist

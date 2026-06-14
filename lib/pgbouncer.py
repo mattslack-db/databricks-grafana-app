@@ -1,4 +1,5 @@
 from __future__ import annotations
+import os
 import subprocess
 
 def render_userlist(client_user: str, client_password: str) -> str:
@@ -32,11 +33,19 @@ def scram_or_plain(_token: str) -> str:  # placeholder if client auth needs md5/
 def launch(binary: str, ini_path: str) -> subprocess.Popen:
     return subprocess.Popen([binary, ini_path])
 
-def reload(psql_binary: str, port: int, admin_user: str, db_name: str) -> None:
+def reload(psql_binary: str, port: int, admin_user: str, admin_password: str,
+           db_name: str) -> None:
     # Task 0 spike finding: RELOAD alone is INSUFFICIENT — if the server
     # password rotates before pooled server conns expire, PgBouncer enters
     # server_login_retry and rejects clients for several seconds. ALWAYS
     # follow RELOAD with RECONNECT <db> to clear that state immediately.
+    #
+    # The admin console requires authentication. admin_user must appear in
+    # userlist.txt (with admin_password) AND in admin_users in pgbouncer.ini.
+    # The password is passed via PGPASSWORD in the subprocess env — NEVER on
+    # argv — so it cannot leak via `ps`.
+    env = {**os.environ, "PGPASSWORD": admin_password}
     subprocess.run([psql_binary, "-h", "127.0.0.1", "-p", str(port),
                     "-U", admin_user, "-d", "pgbouncer",
-                    "-c", f"RELOAD; RECONNECT {db_name};"], check=True)
+                    "-c", f"RELOAD; RECONNECT {db_name};"],
+                   check=True, env=env)
