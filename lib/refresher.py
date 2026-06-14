@@ -1,5 +1,6 @@
 from __future__ import annotations
-import logging, threading, time
+import logging
+import threading
 from dataclasses import dataclass
 
 log = logging.getLogger("refresher")
