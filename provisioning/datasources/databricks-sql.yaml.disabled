@@ -1,0 +1,19 @@
+# Phase-2 placeholder: Databricks SQL Warehouse datasource
+# This file is intentionally disabled (non-.yaml extension).
+# To activate in Phase 2:
+#   1. Bundle the databricks-grafana-datasource plugin into bin/grafana/plugins/
+#   2. Rename this file to databricks-sql.yaml
+#   3. Configure GF_PLUGINS_ALLOW_LOADING_UNSIGNED_PLUGINS if needed
+#   4. Set warehouse connection details via env vars
+#
+# apiVersion: 1
+# datasources:
+#   - name: Databricks SQL
+#     type: grafana-databricks-datasource
+#     access: proxy
+#     isDefault: false
+#     jsonData:
+#       host: ${DATABRICKS_HOST}
+#       path: ${DATABRICKS_WAREHOUSE_HTTP_PATH}
+#     secureJsonData:
+#       token: ${DATABRICKS_TOKEN}
