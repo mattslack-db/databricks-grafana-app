@@ -284,7 +284,7 @@ def render_userlist(client_user: str, client_password: str) -> str:
 def render_ini(*, listen_port: int, db_name: str, server_host: str,
                server_port: int, server_user: str, server_token: str,
                client_user: str, server_lifetime: int = 1800,
-               server_idle_timeout: int = 60) -> str:
+               server_idle_timeout: int = 300) -> str:
     return f"""[databases]
 {db_name} = host={server_host} port={server_port} dbname={db_name} user={server_user} password={server_token} sslmode=require
 
@@ -309,13 +309,24 @@ def scram_or_plain(_token: str) -> str:  # placeholder if client auth needs md5/
 def launch(binary: str, ini_path: str) -> subprocess.Popen:
     return subprocess.Popen([binary, ini_path])
 
-def reload(psql_binary: str, port: int, admin_user: str, reconnect: bool) -> None:
-    cmds = "RELOAD;" + (" RECONNECT;" if reconnect else "")
+def reload(psql_binary: str, port: int, admin_user: str, db_name: str) -> None:
+    # Task 0 spike finding: RELOAD alone is INSUFFICIENT — if the server
+    # password rotates before pooled server conns expire, PgBouncer enters
+    # server_login_retry and rejects clients for several seconds. ALWAYS
+    # follow RELOAD with RECONNECT <db> to clear that state immediately.
     subprocess.run([psql_binary, "-h", "127.0.0.1", "-p", str(port),
-                    "-U", admin_user, "-d", "pgbouncer", "-c", cmds], check=True)
+                    "-U", admin_user, "-d", "pgbouncer",
+                    "-c", f"RELOAD; RECONNECT {db_name};"], check=True)
 ```
 
-> Note: client side uses `scram-sha-256` with a known local password; ensure `userlist.txt` stores it in a form PgBouncer accepts (plaintext entry is acceptable for `scram-sha-256` lookups in local userlist). If the spike shows client auth friction on loopback, fall back to `auth_type = trust` for 127.0.0.1 only — record the decision.
+> **Task 0 spike findings applied:** `RELOAD` is always followed by `RECONNECT <db>`
+> (not optional). Prod config: `pool_mode=transaction`, `server_lifetime=1800`,
+> `server_idle_timeout=300`. We ship our own PgBouncer binary so we fully control
+> `pgbouncer.ini` — the `edoburu` image's `auth_user=` quirk seen in the spike does
+> not apply. Client side uses `scram-sha-256` with a known local password in
+> `userlist.txt` (plaintext entry is accepted for local scram lookups). If client
+> auth shows loopback friction, fall back to `auth_type = trust` for 127.0.0.1 only
+> and record the decision.
 
 - [ ] **Step 4: Run, expect PASS.**
 - [ ] **Step 5: Commit** — `git commit -m "feat: pgbouncer config rendering + launch/reload helpers"`
@@ -553,7 +564,7 @@ Not unit-tested (process orchestration); validated by Task 10 local boot. Keep f
   6. Write `pgbouncer.ini` + `userlist.txt` (render fns). Define `write_server_cred(tok)` = rewrite the `[databases]` line's `password=` in `pgbouncer.ini`. Launch PgBouncer (`bin/pgbouncer`).
   7. Write `provisioning/datasources/lakebase.yaml` from `render_lakebase_datasource(...)`.
   8. Build env: `env = {**os.environ, **build_env(...)}`. Launch Grafana: `subprocess.Popen([f"{GRAFANA_HOME}/bin/grafana","server","--homepath",GRAFANA_HOME], env=env)`.
-  9. Start refresher thread: `run_loop(state, mint=lambda: mint_token(client, cfg.instance_name), write_server_cred, reload=lambda: pgbouncer.reload(...), interval_s=cfg.refresh_interval_s, stop=stop_event)`.
+  9. Start refresher thread: `run_loop(state, mint=lambda: mint_token(client, cfg.instance_name), write_server_cred, reload=lambda: pgbouncer.reload(psql_binary, cfg.pgbouncer_port, cfg.db_user, cfg.database_name), interval_s=cfg.refresh_interval_s, stop=stop_event)`. (`reload` always issues `RELOAD; RECONNECT <db>;` per the Task 0 finding.)
   10. Install SIGTERM/SIGINT handlers that set `stop_event`, terminate children, and exit.
   11. Supervisor loop: `wait()` on Grafana; if Grafana exits → set stop, terminate PgBouncer, exit with Grafana's code. If PgBouncer exits unexpectedly → re-render with `state.last_good_token` and relaunch.
 - [ ] **Step 2: `python -c "import startup"` smoke** (import-only; guard `main()` under `if __name__ == '__main__'`). Expected: no import errors.
