@@ -118,19 +118,24 @@ def main() -> None:
 
     # 1. Load config from environment.
     cfg = load_config(os.environ)
-    log.info("Config loaded: instance=%s db=%s pgbouncer_port=%d refresh_interval=%ds",
-             cfg.instance_name, cfg.database_name, cfg.pgbouncer_port, cfg.refresh_interval_s)
+    log.info("Config loaded: endpoint_path=%s db=%s pgbouncer_port=%d refresh_interval=%ds",
+             cfg.endpoint_path, cfg.database_name, cfg.pgbouncer_port, cfg.refresh_interval_s)
 
     # 2. SDK client + resolve Lakebase endpoint + mint initial token.
     from databricks.sdk import WorkspaceClient  # imported here: heavy; import-safe at module top
     client = WorkspaceClient()
 
-    log.info("Resolving Lakebase endpoint for instance '%s'", cfg.instance_name)
-    ep = resolve_endpoint(client, cfg.instance_name)
+    if cfg.host:
+        log.info("Using pre-configured Lakebase host: %s", cfg.host)
+        from lib.lakebase import LakebaseEndpoint
+        ep = LakebaseEndpoint(host=cfg.host, port=5432)
+    else:
+        log.info("Resolving Lakebase endpoint for path '%s'", cfg.endpoint_path)
+        ep = resolve_endpoint(client, cfg.endpoint_path)
     log.info("Lakebase endpoint: %s:%d", ep.host, ep.port)
 
     log.info("Minting initial Lakebase token")
-    token = mint_token(client, cfg.instance_name)
+    token = mint_token(client, cfg.endpoint_path)
 
     # 3. Preflight: verify CREATE privilege directly against Lakebase (PgBouncer not yet up).
     log.info("Running preflight: checking CREATE privilege on database '%s'", cfg.database_name)
@@ -230,7 +235,7 @@ def main() -> None:
         target=run_loop,
         kwargs=dict(
             state=state,
-            mint=lambda: mint_token(client, cfg.instance_name),
+            mint=lambda: mint_token(client, cfg.endpoint_path),
             write_server_cred=_write_server_cred,
             reload=_reload,
             interval_s=cfg.refresh_interval_s,

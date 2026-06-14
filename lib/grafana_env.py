@@ -32,7 +32,7 @@ datasources:
     isDefault: true
     jsonData:
       sslmode: disable
-      postgresVersion: 1500
+      postgresVersion: 1700
     secureJsonData:
       password: {client_password}
 """

@@ -24,3 +24,4 @@ def test_render_lakebase_datasource_targets_pgbouncer():
     assert "type: postgres" in y
     assert "url: 127.0.0.1:6432" in y
     assert "sslmode" in y and "disable" in y
+    assert "postgresVersion: 1700" in y
