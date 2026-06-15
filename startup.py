@@ -39,6 +39,7 @@ from lib.lakebase import mint_token, resolve_endpoint
 from lib.pgbouncer import launch as pgb_launch, reload as pgb_reload, render_ini, render_userlist
 from lib.preflight import check_create_privilege
 from lib.refresher import RefreshState, run_loop
+from lib.stunnel import launch as stunnel_launch, render_conf as render_stunnel_conf
 
 log = logging.getLogger("startup")
 
@@ -51,6 +52,14 @@ log = logging.getLogger("startup")
 PGBOUNCER_BINARY = os.environ.get("PGBOUNCER_BINARY", "bin/pgbouncer")
 PGBOUNCER_INI_PATH = os.environ.get("PGBOUNCER_INI_PATH", "pgbouncer.ini")
 USERLIST_PATH = os.environ.get("USERLIST_PATH", "userlist.txt")
+
+# stunnel: TLS+SNI shim that PgBouncer connects to in plaintext over loopback.
+# PgBouncer -> stunnel (127.0.0.1:STUNNEL_PORT) -> TLS+SNI -> Lakebase:5432.
+STUNNEL_BINARY = os.environ.get("STUNNEL_BINARY", "bin/stunnel")
+STUNNEL_CONF_PATH = os.environ.get("STUNNEL_CONF_PATH", "stunnel.conf")
+STUNNEL_PORT = int(os.environ.get("STUNNEL_PORT", "5433"))
+# Verify the Lakebase server certificate chain (recommended for production).
+STUNNEL_VERIFY_CHAIN = os.environ.get("STUNNEL_VERIFY_CHAIN", "false").lower() == "true"
 GRAFANA_HOME = os.environ.get("GRAFANA_HOME", "bin/grafana")
 PROVISIONING_DIR = os.environ.get("PROVISIONING_DIR", "provisioning")
 DATASOURCE_YAML_PATH = os.environ.get(
@@ -164,12 +173,28 @@ def main() -> None:
         "token_urlsafe but is asserted defensively."
     )
 
-    # 5. Write pgbouncer.ini and userlist.txt; chmod 0600 (contain token + loopback password).
+    # 5a. Write stunnel.conf and launch stunnel (TLS+SNI shim to Lakebase).
+    #     No secrets in this file — just the Lakebase host/port + SNI.
+    stunnel_conf = render_stunnel_conf(
+        accept_port=STUNNEL_PORT,
+        server_host=ep.host,
+        server_port=ep.port,
+        verify_chain=STUNNEL_VERIFY_CHAIN,
+    )
+    Path(STUNNEL_CONF_PATH).write_text(stunnel_conf)
+    os.chmod(STUNNEL_CONF_PATH, 0o644)
+    log.info("Launching stunnel: %s %s (accept 127.0.0.1:%d -> %s:%d, sni=%s)",
+             STUNNEL_BINARY, STUNNEL_CONF_PATH, STUNNEL_PORT, ep.host, ep.port, ep.host)
+    stunnel_proc = stunnel_launch(STUNNEL_BINARY, STUNNEL_CONF_PATH)
+    log.info("stunnel pid=%d", stunnel_proc.pid)
+
+    # 5b. Write pgbouncer.ini and userlist.txt; chmod 0600 (contain token + loopback password).
+    #     PgBouncer's server points at the LOCAL stunnel, not Lakebase directly.
     ini_content = render_ini(
         listen_port=cfg.pgbouncer_port,
         db_name=cfg.database_name,
-        server_host=ep.host,
-        server_port=ep.port,
+        server_host="127.0.0.1",
+        server_port=STUNNEL_PORT,
         server_user=cfg.db_user,
         server_token=token,
         client_user=cfg.db_user,
@@ -275,13 +300,17 @@ def main() -> None:
     # Mutable container so the teardown closure always sees the current proc
     # even after a relaunch rebinds it.
     pgb_state = {"proc": pgbouncer_proc}
+    stunnel_state = {"proc": stunnel_proc}
     relaunch_times: list[float] = []
+    stunnel_relaunch_times: list[float] = []
 
     def _terminate_children() -> None:
         # Hold ini_lock so we don't race the refresher's write_server_cred.
         with ini_lock:
             stop_event.set()
-            for name, proc in (("Grafana", grafana_proc), ("PgBouncer", pgb_state["proc"])):
+            for name, proc in (("Grafana", grafana_proc),
+                               ("PgBouncer", pgb_state["proc"]),
+                               ("stunnel", stunnel_state["proc"])):
                 if proc.poll() is None:
                     log.info("Terminating %s (pid=%d)", name, proc.pid)
                     proc.terminate()
@@ -300,8 +329,8 @@ def main() -> None:
             new_ini = render_ini(
                 listen_port=cfg.pgbouncer_port,
                 db_name=cfg.database_name,
-                server_host=ep.host,
-                server_port=ep.port,
+                server_host="127.0.0.1",
+                server_port=STUNNEL_PORT,
                 server_user=cfg.db_user,
                 server_token=tok,
                 client_user=cfg.db_user,
@@ -325,6 +354,32 @@ def main() -> None:
             log.info("Grafana exited with code %d; shutting down", rc)
             _terminate_children()
             sys.exit(rc)
+
+        # stunnel is a support process: relaunch on unexpected exit. Its config
+        # is static (no token), so relaunch just re-runs the same conf file.
+        s = stunnel_state["proc"]
+        s_rc = s.poll()
+        if s_rc is not None:
+            now = time.monotonic()
+            stunnel_relaunch_times[:] = [t for t in stunnel_relaunch_times
+                                         if now - t < PGB_RELAUNCH_WINDOW_S]
+            if len(stunnel_relaunch_times) >= PGB_MAX_RELAUNCHES:
+                log.error("stunnel crash-looped (%d relaunches within %ds); "
+                          "giving up so the platform can restart the app",
+                          len(stunnel_relaunch_times), PGB_RELAUNCH_WINDOW_S)
+                _terminate_children()
+                sys.exit(1)
+            log.warning("stunnel (pid=%d) exited unexpectedly with code %d; relaunching",
+                        s.pid, s_rc)
+            stunnel_relaunch_times.append(now)
+            new_stunnel = stunnel_launch(STUNNEL_BINARY, STUNNEL_CONF_PATH)
+            time.sleep(PGB_LAUNCH_SETTLE_S)
+            if new_stunnel.poll() is not None:
+                log.error("stunnel relaunch (pid=%d) died immediately with code %s",
+                          new_stunnel.pid, new_stunnel.poll())
+            else:
+                log.info("stunnel relaunched (pid=%d)", new_stunnel.pid)
+            stunnel_state["proc"] = new_stunnel
 
         # PgBouncer is a support process: relaunch on unexpected exit.
         p = pgb_state["proc"]

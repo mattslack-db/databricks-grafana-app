@@ -9,8 +9,14 @@ def render_ini(*, listen_port: int, db_name: str, server_host: str,
                server_port: int, server_user: str, server_token: str,
                client_user: str, server_lifetime: int = 1800,
                server_idle_timeout: int = 300) -> str:
+    # PgBouncer connects to a LOCAL stunnel shim (127.0.0.1), in plaintext.
+    # stunnel terminates TLS to Lakebase and sends the SNI that Lakebase requires
+    # for routing — PgBouncer itself never sends SNI (any version), so it cannot
+    # talk to Lakebase directly. Hence server_tls_sslmode = disable here: the
+    # only TLS hop is stunnel -> Lakebase. server_host/server_port therefore point
+    # at the stunnel accept address, not at Lakebase.
     return f"""[databases]
-{db_name} = host={server_host} port={server_port} dbname={db_name} user={server_user} password={server_token} sslmode=require
+{db_name} = host={server_host} port={server_port} dbname={db_name} user={server_user} password={server_token}
 
 [pgbouncer]
 listen_addr = 127.0.0.1
@@ -18,7 +24,15 @@ listen_port = {listen_port}
 auth_type = scram-sha-256
 auth_file = userlist.txt
 admin_users = {client_user}
-pool_mode = transaction
+# session pooling (NOT transaction): Grafana's ORM uses prepared statements,
+# which break under transaction pooling ("unnamed prepared statement does not
+# exist" / bind-parameter mismatches when Parse/Bind land on different server
+# conns). Grafana holds few connections, so session pooling is the right fit.
+pool_mode = session
+server_tls_sslmode = disable
+# Grafana's lib/pq driver sends extra_float_digits on startup; in transaction
+# pooling PgBouncer rejects unknown startup params unless explicitly ignored.
+ignore_startup_parameters = extra_float_digits
 server_lifetime = {server_lifetime}
 server_idle_timeout = {server_idle_timeout}
 max_client_conn = 200
