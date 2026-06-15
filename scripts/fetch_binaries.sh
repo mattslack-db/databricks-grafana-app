@@ -160,7 +160,10 @@ else
 
     info "Extracting pgbouncer binary from .deb …"
     # .deb layout: ar archive containing data.tar.* with the actual files.
-    ar x "${TMPDIR_WORK}/${PGBOUNCER_DEB}" --output="${TMPDIR_WORK}/deb_contents"
+    # Use `cd && ar x` (portable): `ar x --output=DIR` needs a newer GNU binutils
+    # AND a pre-existing dir, which fails on slim Debian (debian:bookworm/python-slim).
+    mkdir -p "${TMPDIR_WORK}/deb_contents"
+    ( cd "${TMPDIR_WORK}/deb_contents" && ar x "${TMPDIR_WORK}/${PGBOUNCER_DEB}" )
 
     # Find data.tar (may be .xz, .gz, .zst depending on dpkg version)
     DATA_TAR="$(find "${TMPDIR_WORK}/deb_contents" -name 'data.tar.*' | head -1)"
