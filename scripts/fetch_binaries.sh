@@ -259,9 +259,11 @@ fi
 # psql (postgresql-client-16)
 # ---------------------------------------------------------------------------
 #
-# The postgresql-client-16 .deb provides /usr/bin/psql. We extract only that
-# binary; the shared libs it needs (libpq5, libssl, etc.) are bundled by the
-# lib-bundling step below.
+# The postgresql-client-16 .deb provides the real psql binary at
+# /usr/lib/postgresql/16/bin/psql (NOT /usr/bin/psql — that path is a wrapper
+# shipped by a different package, postgresql-client-common). We extract only the
+# real binary; the shared libs it needs (libpq5, libssl, etc.) are bundled by
+# the lib-bundling step below.
 
 PSQL_DEST="${BIN_DIR}/psql"
 PSQL_DEB_CACHE="${BIN_DIR}/.psql_${PSQL_VERSION}.deb"
@@ -284,9 +286,9 @@ else
     PSQL_DATA_TAR="$(find "${TMPDIR_WORK}/psql_deb" -name 'data.tar.*' | head -1)"
     [[ -n "${PSQL_DATA_TAR}" ]] || error "data.tar.* not found inside postgresql-client-16 .deb"
 
-    tar -xf "${PSQL_DATA_TAR}" -C "${TMPDIR_WORK}/psql_deb" ./usr/bin/psql
+    tar -xf "${PSQL_DATA_TAR}" -C "${TMPDIR_WORK}/psql_deb" ./usr/lib/postgresql/16/bin/psql
 
-    PSQL_EXTRACTED="${TMPDIR_WORK}/psql_deb/usr/bin/psql"
+    PSQL_EXTRACTED="${TMPDIR_WORK}/psql_deb/usr/lib/postgresql/16/bin/psql"
     [[ -f "${PSQL_EXTRACTED}" ]] || error "psql binary not found at expected path in .deb"
 
     install -m 0755 "${PSQL_EXTRACTED}" "${PSQL_DEST}"

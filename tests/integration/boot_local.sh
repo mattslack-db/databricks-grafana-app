@@ -9,13 +9,17 @@ echo "== python deps =="
 python -c "import databricks.sdk, psycopg" 2>/dev/null && echo "deps already present (baked in image)" \
   || pip install --no-cache-dir -q -r requirements.txt
 
+have_binaries() {
+  [[ -x bin/grafana/bin/grafana && -x bin/pgbouncer && -x bin/stunnel && -x bin/psql ]] \
+    && [[ -d bin/lib ]] && [[ -n "$(ls -A bin/lib 2>/dev/null)" ]]
+}
 echo "== fetch binaries (idempotent, retries transient net) =="
 for attempt in 1 2 3; do
-  if [[ -x bin/grafana/bin/grafana && -x bin/pgbouncer ]]; then break; fi
+  if have_binaries; then break; fi
   echo "fetch attempt ${attempt}…"
   bash scripts/fetch_binaries.sh && break || { echo "fetch failed (attempt ${attempt}); retrying"; sleep 3; }
 done
-[[ -x bin/grafana/bin/grafana && -x bin/pgbouncer ]] || { echo "FATAL: binaries missing after retries"; exit 1; }
+have_binaries || { echo "FATAL: binaries/libs missing after retries"; exit 1; }
 
 echo "== binaries ready =="
 echo "== sanity: binary archs =="
