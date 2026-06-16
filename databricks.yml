@@ -1,0 +1,32 @@
+# databricks.yml — Databricks Asset Bundle (DAB) for Grafana on Databricks Apps.
+#
+# Deploy with:
+#   databricks bundle deploy --target dev
+#
+# The app env vars (LAKEBASE_*, GRAFANA_ROOT_URL, TOKEN_REFRESH_INTERVAL_S) are
+# defined in app.yaml under `env:` — that is where the Databricks Apps runtime
+# reads them.  Do NOT put secrets here; use Databricks Secrets and reference
+# them via {{secrets/scope/key}} in app.yaml if needed in future.
+#
+# CONTROLLER NOTE: verify the `resources.apps` schema against the version of the
+# Databricks CLI / DAB spec in use.  The `source_code_path` key (pointing to the
+# app directory) is the current DAB schema for Apps as of CLI 0.221+.  If the
+# CLI version in CI differs, `path` may be the correct key instead.
+
+bundle:
+  name: grafana-app
+
+targets:
+  dev:
+    mode: development
+    workspace:
+      host: https://fevm-classic-stable-qh34qo.cloud.databricks.com
+
+    resources:
+      apps:
+        grafana-app:
+          name: grafana-app
+          description: "Grafana OSS dashboard server backed by Databricks Lakebase (Postgres)"
+          # source_code_path points to the directory containing app.yaml.
+          # DAB uploads this directory as the app source.
+          source_code_path: .

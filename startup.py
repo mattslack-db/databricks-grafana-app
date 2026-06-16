@@ -55,6 +55,7 @@ USERLIST_PATH = os.environ.get("USERLIST_PATH", "userlist.txt")
 
 # stunnel: TLS+SNI shim that PgBouncer connects to in plaintext over loopback.
 # PgBouncer -> stunnel (127.0.0.1:STUNNEL_PORT) -> TLS+SNI -> Lakebase:5432.
+# Default points at the bundled binary; override with STUNNEL_BINARY env var.
 STUNNEL_BINARY = os.environ.get("STUNNEL_BINARY", "bin/stunnel")
 STUNNEL_CONF_PATH = os.environ.get("STUNNEL_CONF_PATH", "stunnel.conf")
 STUNNEL_PORT = int(os.environ.get("STUNNEL_PORT", "5433"))
@@ -67,12 +68,9 @@ DATASOURCE_YAML_PATH = os.environ.get(
 )
 
 # psql is used to reach the PgBouncer admin console (RELOAD; RECONNECT <db>;).
-# NOTE: The deployed Databricks App image must include a `psql` binary on PATH.
-# The fetch_binaries.sh script (Task 9) fetches Grafana and PgBouncer; a psql
-# binary from the same distro package (e.g. libpq-dev / postgresql-client) must
-# also be staged into bin/ and added to PATH in the app environment (Task 11).
-# For now we assume `psql` is on PATH; if it moves we'll set PSQL_BINARY env.
-PSQL_BINARY = os.environ.get("PSQL_BINARY", "psql")
+# Default points at the bundled binary staged by scripts/fetch_binaries.sh.
+# Override with PSQL_BINARY env var (the local harness may override this).
+PSQL_BINARY = os.environ.get("PSQL_BINARY", "bin/psql")
 
 
 # ---------------------------------------------------------------------------
@@ -119,11 +117,34 @@ def write_server_cred(tok: str, ini_path: str, ini_lock: threading.Lock) -> None
 # main — all side-effecting work lives here
 # ---------------------------------------------------------------------------
 
+def _prepend_lib_path() -> None:
+    """Prepend bin/lib/ (absolute) to LD_LIBRARY_PATH.
+
+    This must be called before any child process is launched so that pgbouncer,
+    stunnel, and psql all inherit the bundled shared libraries from bin/lib/
+    (staged by scripts/fetch_binaries.sh) rather than requiring apt-installed
+    runtime packages. The Databricks Apps runtime has no apt access, so all
+    non-glibc .so files are bundled there.
+
+    Preserves any pre-existing LD_LIBRARY_PATH value (prepend, colon-separated).
+    """
+    lib_dir = str(Path(__file__).resolve().parent / "bin" / "lib")
+    existing = os.environ.get("LD_LIBRARY_PATH", "")
+    new_val = f"{lib_dir}:{existing}" if existing else lib_dir
+    os.environ["LD_LIBRARY_PATH"] = new_val
+    log.info("LD_LIBRARY_PATH set to: %s", new_val)
+
+
 def main() -> None:
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
+
+    # 0. Prepend bin/lib/ to LD_LIBRARY_PATH so all child processes (pgbouncer,
+    #    stunnel, psql) find their bundled shared libraries.  Must happen before
+    #    any subprocess.Popen call.
+    _prepend_lib_path()
 
     # 1. Load config from environment.
     cfg = load_config(os.environ)

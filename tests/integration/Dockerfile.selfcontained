@@ -1,0 +1,56 @@
+# tests/integration/Dockerfile.selfcontained
+#
+# PROVES: the app runs using ONLY the binaries and shared libraries bundled
+# into bin/ by scripts/fetch_binaries.sh, with LD_LIBRARY_PATH=bin/lib set
+# by startup.py — no apt-installed runtime libs for pgbouncer/stunnel/psql.
+#
+# This image intentionally OMITS all runtime libraries that the standard
+# Dockerfile (tests/integration/Dockerfile) installs via apt:
+#   - postgresql-client  (psql is NOT apt-installed here)
+#   - libevent-2.1-7     (libevent is NOT apt-installed here)
+#   - libc-ares2         (NOT apt-installed here)
+#   - libssl3            (NOT apt-installed here)
+#   - libwrap0           (NOT apt-installed here)
+#
+# What IS installed:
+#   - ca-certificates  — needed for TLS verification (stunnel CApath)
+#   - binutils         — `ar` for .deb extraction in fetch_binaries.sh
+#   - curl             — download binaries in fetch_binaries.sh
+#   - xz-utils         — extract data.tar.xz from .deb files
+#   - file             — arch sanity checks in boot scripts
+#
+# If the app boots successfully using ONLY bin/ + bin/lib/, this image
+# confirms the bundle is self-contained for the Databricks Apps runtime
+# (which also has no apt access to runtime libs).
+#
+# Usage (run from repo root, with colima/docker running linux/amd64):
+#   docker build --platform linux/amd64 \
+#       -f tests/integration/Dockerfile.selfcontained -t grafana-app-selfcontained .
+#   docker run --rm --platform linux/amd64 \
+#       -v "$(pwd)/bin:/app/bin" \
+#       --env-file .env.integration \
+#       grafana-app-selfcontained
+
+FROM --platform=linux/amd64 python:3.11-slim-bookworm
+
+# Build tools only — NO runtime libs (that is the point of this image).
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        binutils \
+        curl \
+        xz-utils \
+        file \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Non-root user matching the deployed app environment (PgBouncer refuses root).
+RUN groupadd --gid 1000 appuser \
+    && useradd --uid 1000 --gid 1000 --no-create-home appuser \
+    && mkdir -p /work && chown appuser:appuser /work
+
+ENV PIP_DISABLE_PIP_VERSION_CHECK=1
+
+# Repo is bind-mounted at /app; bin/ (with bundled libs) is expected at /app/bin.
+# The boot script installs Python deps at run time (same as the standard image).
+CMD ["bash", "tests/integration/boot_local.sh"]
