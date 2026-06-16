@@ -51,6 +51,20 @@ RUN groupadd --gid 1000 appuser \
 
 ENV PIP_DISABLE_PIP_VERSION_CHECK=1
 
+# Bake the Python deps into the image at build time (as root, into the global
+# site-packages). This mirrors the real Databricks Apps runtime, which builds
+# the environment from requirements.txt at DEPLOY time — not at each boot. It
+# also avoids a runtime `pip install` by the non-root appuser, who has no
+# writable HOME or site-packages. The self-containment claim this image proves
+# is about the bundled C binaries + shared libs in bin/lib (pgbouncer, stunnel,
+# psql, grafana), which is unaffected by where the Python deps come from.
+# PIP_INDEX_URL defaults to the Databricks internal proxy because pypi.org is
+# null-routed (127.0.0.1) on the build host. Override with --build-arg for a
+# normal network. (The real Databricks Apps build uses its own internal index.)
+ARG PIP_INDEX_URL=https://pypi-proxy.dev.databricks.com/simple
+COPY requirements.txt /tmp/requirements.txt
+RUN pip install --no-cache-dir --index-url "${PIP_INDEX_URL}" -r /tmp/requirements.txt
+
 # Repo is bind-mounted at /app; bin/ (with bundled libs) is expected at /app/bin.
-# The boot script installs Python deps at run time (same as the standard image).
+# boot_local.sh sees the baked-in deps, skips pip, and launches the supervisor.
 CMD ["bash", "tests/integration/boot_local.sh"]
