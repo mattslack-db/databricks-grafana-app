@@ -7,6 +7,14 @@ command: ["python", "startup.py"]
 # DATABRICKS_CLIENT_SECRET (or DATABRICKS_TOKEN) and DATABRICKS_APP_PORT
 # automatically — do not set those here.
 env:
+  # GRAFANA_BUNDLE_VOLUME_PATH: UC Volume path to the gzipped binary bundle.
+  # On cold start, startup.py downloads + extracts this into bin/ (the Grafana
+  # binary is ~360 MB, far above the 10 MB Apps source-file limit, so it cannot
+  # ship in the app source). The app's service principal needs READ on this
+  # volume (USE CATALOG + USE SCHEMA + READ VOLUME), granted at deploy time.
+  - name: GRAFANA_BUNDLE_VOLUME_PATH
+    value: "/Volumes/classic_stable_qh34qo_catalog/grafana_app/binaries/bin.tar.gz"
+
   - name: LAKEBASE_ENDPOINT_PATH
     value: "projects/grafana-app/branches/production/endpoints/primary"
 

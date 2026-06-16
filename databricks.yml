@@ -16,6 +16,19 @@
 bundle:
   name: grafana-app
 
+# Exclude large/local-only artifacts from the app source upload. Databricks
+# Apps reject any source file >10 MB, and bin/ holds the ~360 MB Grafana binary
+# (delivered at runtime from a UC Volume instead — see lib/staging.py). bin/ is
+# also gitignored, but this explicit exclude is defence-in-depth so a stray
+# local bin/ can never break the deploy.
+sync:
+  exclude:
+    - "bin/**"
+    - "tests/integration/**"
+    - "**/__pycache__/**"
+    - "*.tar.gz"
+    - ".pytest_cache/**"
+
 targets:
   dev:
     mode: development

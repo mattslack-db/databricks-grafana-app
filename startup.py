@@ -39,6 +39,7 @@ from lib.lakebase import mint_token, resolve_endpoint
 from lib.pgbouncer import launch as pgb_launch, reload as pgb_reload, render_ini, render_userlist
 from lib.preflight import check_create_privilege
 from lib.refresher import RefreshState, run_loop
+from lib.staging import stage_binaries
 from lib.stunnel import launch as stunnel_launch, render_conf as render_stunnel_conf
 
 log = logging.getLogger("startup")
@@ -141,20 +142,37 @@ def main() -> None:
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
 
-    # 0. Prepend bin/lib/ to LD_LIBRARY_PATH so all child processes (pgbouncer,
-    #    stunnel, psql) find their bundled shared libraries.  Must happen before
-    #    any subprocess.Popen call.
-    _prepend_lib_path()
-
     # 1. Load config from environment.
     cfg = load_config(os.environ)
     log.info("Config loaded: endpoint_path=%s db=%s pgbouncer_port=%d refresh_interval=%ds",
              cfg.endpoint_path, cfg.database_name, cfg.pgbouncer_port, cfg.refresh_interval_s)
 
-    # 2. SDK client + resolve Lakebase endpoint + mint initial token.
+    # 2. SDK client. Created before staging because staging downloads the binary
+    #    bundle from a UC Volume via this client's Files API.
     from databricks.sdk import WorkspaceClient  # imported here: heavy; import-safe at module top
     client = WorkspaceClient()
 
+    # 2a. Stage the prebuilt binary bundle from a UC Volume if configured.
+    #     Databricks Apps caps source files at 10 MB, far below the ~360 MB
+    #     Grafana binary, so the bundle ships in a Volume and is downloaded +
+    #     extracted into bin/ on cold start. Idempotent: a warm container with
+    #     bin/ already populated skips the download. The local docker harness
+    #     leaves GRAFANA_BUNDLE_VOLUME_PATH unset (it pre-stages bin/), so this
+    #     is a no-op there.
+    bundle_volume_path = os.environ.get("GRAFANA_BUNDLE_VOLUME_PATH")
+    if bundle_volume_path:
+        bin_dir = str(Path(__file__).resolve().parent / "bin")
+        log.info("Bundle staging configured: %s -> %s", bundle_volume_path, bin_dir)
+        stage_binaries(client, bundle_volume_path, bin_dir)
+    else:
+        log.info("GRAFANA_BUNDLE_VOLUME_PATH unset; assuming bin/ is pre-staged")
+
+    # 2b. Prepend bin/lib/ to LD_LIBRARY_PATH so all child processes (pgbouncer,
+    #     stunnel, psql) find their bundled shared libraries. Must happen AFTER
+    #     staging (so bin/lib exists) and before any subprocess.Popen call.
+    _prepend_lib_path()
+
+    # 3. Resolve Lakebase endpoint + mint initial token.
     if cfg.host:
         log.info("Using pre-configured Lakebase host: %s", cfg.host)
         from lib.lakebase import LakebaseEndpoint
@@ -167,7 +185,7 @@ def main() -> None:
     log.info("Minting initial Lakebase token")
     token = mint_token(client, cfg.endpoint_path)
 
-    # 3. Preflight: verify CREATE privilege directly against Lakebase (PgBouncer not yet up).
+    # 4. Preflight: verify CREATE privilege directly against Lakebase (PgBouncer not yet up).
     log.info("Running preflight: checking CREATE privilege on database '%s'", cfg.database_name)
     try:
         with psycopg.connect(
