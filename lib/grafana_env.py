@@ -1,5 +1,20 @@
 from __future__ import annotations
 
+from urllib.parse import urlparse
+
+
+def _serve_from_sub_path(root_url: str) -> str:
+    """Grafana's serve_from_sub_path must be true ONLY when the root URL has a
+    path component (e.g. https://host/grafana) and false when Grafana owns the
+    whole host root (e.g. https://app.databricksapps.com). A deployed Databricks
+    App owns its entire hostname, so it is served at root; the local docker
+    harness uses a /grafana sub-path. Deriving this from root_url keeps both
+    correct instead of hard-wiring one mode.
+    """
+    path = urlparse(root_url).path.strip("/")
+    return "true" if path else "false"
+
+
 def build_env(*, app_port: int, pgbouncer_port: int, db_name: str,
               client_user: str, client_password: str, root_url: str,
               provisioning_dir: str) -> dict:
@@ -12,7 +27,7 @@ def build_env(*, app_port: int, pgbouncer_port: int, db_name: str,
         "GF_DATABASE_SSL_MODE": "disable",
         "GF_SERVER_HTTP_PORT": str(app_port),
         "GF_SERVER_ROOT_URL": root_url,
-        "GF_SERVER_SERVE_FROM_SUB_PATH": "true",
+        "GF_SERVER_SERVE_FROM_SUB_PATH": _serve_from_sub_path(root_url),
         "GF_AUTH_ANONYMOUS_ENABLED": "true",
         "GF_AUTH_ANONYMOUS_ORG_ROLE": "Admin",
         "GF_AUTH_DISABLE_LOGIN_FORM": "true",

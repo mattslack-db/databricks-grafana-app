@@ -32,18 +32,19 @@ env:
   # The value is known only after the app SP is provisioned; replace the
   # placeholder below with the actual SP application-id before deploying.
   # Example: "12345678-abcd-ef01-2345-6789abcdef01"
+  # This app's service principal application-id (from `databricks apps list`).
   - name: LAKEBASE_DB_USER
-    value: "TODO: replace-with-app-sp-application-id"
+    value: "1bead859-9de6-46ed-8621-0e9d9c23f70e"
 
   # GRAFANA_ROOT_URL: the public URL Grafana uses for redirects and links.
   # This is only known after the first deploy (Databricks Apps assigns the URL).
   # Set to https://<your-app-name>-<workspace-id>.databricksapps.com after
   # the first deploy completes.
-  # NOTE: if the app URL contains a sub-path, GF_SERVER_SERVE_FROM_SUB_PATH
-  # and GF_SERVER_ROOT_URL must also be revisited — the current startup.py
-  # wires root_url directly to GF_SERVER_ROOT_URL.
+  # The app owns its whole hostname (served at root, no sub-path), so
+  # grafana_env._serve_from_sub_path() resolves GF_SERVER_SERVE_FROM_SUB_PATH
+  # to false automatically from this URL.
   - name: GRAFANA_ROOT_URL
-    value: "TODO: replace-with-https-app-url-after-first-deploy"
+    value: "https://grafana-app-7474656259058151.aws.databricksapps.com"
 
   # Token refresh interval in seconds (default 3600 if unset; 3000 gives
   # comfortable margin before the 1h Lakebase token expiry).
