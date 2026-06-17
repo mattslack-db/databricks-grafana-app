@@ -1,0 +1,48 @@
+# databricks.yml — Databricks Asset Bundle (DAB) for Grafana on Databricks Apps.
+#
+# Deploy with:
+#   databricks bundle deploy --target dev
+#
+# The app env vars (LAKEBASE_*, GRAFANA_ROOT_URL, TOKEN_REFRESH_INTERVAL_S) are
+# defined in app.yaml under `env:` — that is where the Databricks Apps runtime
+# reads them.  Do NOT put secrets here; use Databricks Secrets and reference
+# them via {{secrets/scope/key}} in app.yaml if needed in future.
+#
+# CONTROLLER NOTE: verify the `resources.apps` schema against the version of the
+# Databricks CLI / DAB spec in use.  The `source_code_path` key (pointing to the
+# app directory) is the current DAB schema for Apps as of CLI 0.221+.  If the
+# CLI version in CI differs, `path` may be the correct key instead.
+
+bundle:
+  name: grafana-app
+
+# Exclude large/local-only artifacts from the app source upload. Databricks
+# Apps reject any source file >10 MB, and bin/ holds the ~360 MB Grafana binary
+# (delivered at runtime from a UC Volume instead — see lib/staging.py). bin/ is
+# also gitignored, but this explicit exclude is defence-in-depth so a stray
+# local bin/ can never break the deploy.
+sync:
+  exclude:
+    - "bin/**"
+    - "tests/integration/**"
+    - "**/__pycache__/**"
+    - ".pytest_cache/**"
+  # NOTE: runtime artifacts that startup.py regenerates on boot (pgbouncer.ini,
+  # userlist.txt, stunnel.conf, pgbouncer.pid, provisioning/datasources/
+  # lakebase.yaml) contain secrets and are kept out of the upload via .gitignore
+  # (DAB honors .gitignore), so they are deliberately NOT listed here.
+
+targets:
+  dev:
+    mode: development
+    workspace:
+      host: https://example-workspace.cloud.databricks.com
+
+    resources:
+      apps:
+        grafana-app:
+          name: grafana-app
+          description: "Grafana OSS dashboard server backed by Databricks Lakebase (Postgres)"
+          # source_code_path points to the directory containing app.yaml.
+          # DAB uploads this directory as the app source.
+          source_code_path: .

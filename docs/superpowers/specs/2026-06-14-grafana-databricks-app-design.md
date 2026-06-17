@@ -179,3 +179,34 @@ the app (the doc's intent) without bloating git history.
   egress).
 - Dashboard provisioning (committed dashboard JSON) once datasources are stable.
 ```
+
+---
+
+## Addendum 2026-06-14 — Autoscaling Lakebase (supersedes provisioned-API assumptions)
+
+The Lakebase instance was provisioned on the **Autoscaling** tier, not the
+provisioned `databricks database` tier the body of this spec assumed. The
+following supersedes the earlier `instance_name` / `w.database` references.
+
+**Provisioned instance (workspace `fevm-classic`):**
+- Project / branch / endpoint: `grafana-app` / `production` / `primary`
+- Endpoint resource path: `projects/grafana-app/branches/production/endpoints/primary`
+- Host: `ep-example-00000000.database.us-east-1.cloud.databricks.com`, port `5432`
+- Database: `grafana` (created), engine **PostgreSQL 17.10**
+
+**Runtime API (databricks-sdk, verified against installed version):**
+- Token: `w.postgres.generate_database_credential(endpoint_path).token`
+  (also returns `.expire_time`). `endpoint_path` is the string above.
+- Host (optional resolve): `w.postgres.get_endpoint(endpoint_path).status.hosts.host`.
+  Host is stable, so it may instead be supplied via env var.
+- **Connection user is the Databricks identity**, not a Postgres role: the app's
+  service principal application-id at runtime (a human email when testing
+  locally). There is no `grafana_sp` role.
+
+**Impact on the build:**
+- `lib/lakebase.py` → use `client.postgres.generate_database_credential(...)` and
+  `client.postgres.get_endpoint(...)`; key off the endpoint path, not an instance name.
+- `lib/config.py` → carry the endpoint path (or project/branch/endpoint parts) and
+  the connection identity (`db_user` = SP app-id / email), plus an optional explicit host.
+- `lib/grafana_env.py` → datasource `postgresVersion: 1700` (PG 17), was 1500.
+- Deploy: grant the app SP `CREATE` on the `grafana` DB (preflight enforces it).

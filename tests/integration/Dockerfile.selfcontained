@@ -1,0 +1,77 @@
+# tests/integration/Dockerfile.selfcontained
+#
+# PROVES: the app runs using ONLY the binaries and shared libraries bundled
+# into bin/ by scripts/assemble_bundle.sh, with LD_LIBRARY_PATH=bin/lib set
+# by startup.py — no apt-installed runtime libs for pgbouncer/stunnel/psql.
+#
+# Base image is ubuntu:22.04 (glibc 2.35) — the SAME base as the Databricks
+# Apps runtime. This is intentional: the bundle's C binaries and bundled .so
+# files were compiled against glibc 2.35 (by assemble_bundle.sh running on
+# ubuntu:22.04 via Dockerfile.bundlebuilder). glibc is backward- but NOT
+# forward-compatible, so running the bundle on bookworm (glibc 2.36) would
+# not catch glibc version mismatches the way the real runtime would. ubuntu:22.04
+# gives us exact parity with the deployed environment.
+#
+# This image intentionally OMITS all runtime libraries:
+#   - postgresql-client  (psql is NOT apt-installed here)
+#   - libevent           (NOT apt-installed here)
+#   - libc-ares2         (NOT apt-installed here)
+#   - libssl             (NOT apt-installed here)
+#   - libwrap0           (NOT apt-installed here)
+#
+# What IS installed (same set as the Databricks Apps runtime):
+#   - python3 + python3-pip — Python supervisor
+#   - ca-certificates       — TLS verification (stunnel CAfile)
+#   - file                  — arch sanity checks in boot_local.sh
+#
+# If the app boots successfully using ONLY bin/ + bin/lib/, this image
+# confirms the bundle is self-contained for the Databricks Apps runtime.
+#
+# Usage (run from repo root, with colima/docker running linux/amd64):
+#   docker build --platform linux/amd64 \
+#       -f tests/integration/Dockerfile.selfcontained -t grafana-app-selfcontained .
+#   docker run --rm --platform linux/amd64 \
+#       -v "$(pwd)/bin:/app/bin" \
+#       -e GRAFANA_BUNDLE_TARBALL=/local/bin.tar.gz \
+#       -v "$HOME/grafana-bundle-stage:/local:ro" \
+#       --env-file .env.integration \
+#       grafana-app-selfcontained
+
+FROM --platform=linux/amd64 ubuntu:22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Minimal runtime deps only — NO pgbouncer/stunnel/psql (that is the point).
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        python3 \
+        python3-pip \
+        ca-certificates \
+        file \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Non-root user matching the deployed app environment (PgBouncer refuses root).
+RUN groupadd --gid 1000 appuser \
+    && useradd --uid 1000 --gid 1000 --no-create-home appuser \
+    && mkdir -p /work && chown appuser:appuser /work
+
+ENV PIP_DISABLE_PIP_VERSION_CHECK=1
+
+# Bake the Python deps into the image at build time (as root, into the global
+# site-packages). This mirrors the real Databricks Apps runtime, which builds
+# the environment from requirements.txt at DEPLOY time — not at each boot. It
+# also avoids a runtime `pip install` by the non-root appuser, who has no
+# writable HOME or site-packages. The self-containment claim this image proves
+# is about the bundled C binaries + shared libs in bin/lib (pgbouncer, stunnel,
+# psql, grafana), which is unaffected by where the Python deps come from.
+# PIP_INDEX_URL defaults to the Databricks internal proxy because pypi.org is
+# null-routed (127.0.0.1) on the build host. Override with --build-arg for a
+# normal network. (The real Databricks Apps build uses its own internal index.)
+ARG PIP_INDEX_URL=https://pypi-proxy.dev.databricks.com/simple
+COPY requirements.txt /tmp/requirements.txt
+RUN pip3 install --no-cache-dir --index-url "${PIP_INDEX_URL}" -r /tmp/requirements.txt
+
+# Repo is bind-mounted at /app; bin/ (with bundled libs) is expected at /app/bin.
+# boot_local.sh sees the baked-in deps, skips pip, and launches the supervisor.
+CMD ["bash", "tests/integration/boot_local.sh"]

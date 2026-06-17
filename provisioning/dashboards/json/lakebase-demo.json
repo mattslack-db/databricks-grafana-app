@@ -1,0 +1,116 @@
+{
+  "uid": "lakebase-demo",
+  "title": "Lakebase Demo — App Metrics",
+  "tags": ["lakebase", "demo"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "editable": true,
+  "time": { "from": "now-24h", "to": "now" },
+  "refresh": "30s",
+  "templating": {
+    "list": [
+      {
+        "name": "service",
+        "type": "query",
+        "datasource": { "type": "postgres", "uid": "lakebase" },
+        "query": "SELECT DISTINCT service FROM demo.app_metrics ORDER BY 1",
+        "includeAll": true,
+        "multi": true,
+        "current": { "text": "All", "value": "$__all" },
+        "refresh": 2
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Total requests (selected range)",
+      "datasource": { "type": "postgres", "uid": "lakebase" },
+      "gridPos": { "h": 6, "w": 8, "x": 0, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "short", "color": { "mode": "thresholds" } }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["sum"], "fields": "", "values": false }, "colorMode": "value", "graphMode": "area" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "postgres", "uid": "lakebase" },
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT sum(value) AS \"Total requests\" FROM demo.app_metrics WHERE metric = 'requests_per_min' AND service IN ($service) AND $__timeFilter(ts)"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Avg p95 latency (ms)",
+      "datasource": { "type": "postgres", "uid": "lakebase" },
+      "gridPos": { "h": 6, "w": 8, "x": 8, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "ms", "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "yellow", "value": 80 }, { "color": "red", "value": 120 } ] } }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["mean"], "fields": "", "values": false }, "colorMode": "value", "graphMode": "area" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "postgres", "uid": "lakebase" },
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT avg(value) AS \"Avg p95 latency\" FROM demo.app_metrics WHERE metric = 'p95_latency_ms' AND service IN ($service) AND $__timeFilter(ts)"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Services",
+      "datasource": { "type": "postgres", "uid": "lakebase" },
+      "gridPos": { "h": 6, "w": 8, "x": 16, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "short", "color": { "mode": "fixed", "fixedColor": "blue" } }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "colorMode": "value", "graphMode": "none" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "postgres", "uid": "lakebase" },
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT count(DISTINCT service) AS \"Services\" FROM demo.app_metrics"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Requests / min by service",
+      "datasource": { "type": "postgres", "uid": "lakebase" },
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 6 },
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "drawStyle": "line", "fillOpacity": 10, "lineWidth": 2, "showPoints": "never" } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"] }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "postgres", "uid": "lakebase" },
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT $__timeGroup(ts, $__interval) AS time, service AS metric, avg(value) AS value FROM demo.app_metrics WHERE metric = 'requests_per_min' AND service IN ($service) AND $__timeFilter(ts) GROUP BY 1, service ORDER BY 1"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "p95 latency (ms) by service",
+      "datasource": { "type": "postgres", "uid": "lakebase" },
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 6 },
+      "fieldConfig": { "defaults": { "unit": "ms", "custom": { "drawStyle": "line", "fillOpacity": 10, "lineWidth": 2, "showPoints": "never" } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"] }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "postgres", "uid": "lakebase" },
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT $__timeGroup(ts, $__interval) AS time, service AS metric, avg(value) AS value FROM demo.app_metrics WHERE metric = 'p95_latency_ms' AND service IN ($service) AND $__timeFilter(ts) GROUP BY 1, service ORDER BY 1"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,84 @@
+{
+  "uid": "databricks-sql-demo",
+  "title": "Databricks SQL — NYC Taxi (samples)",
+  "tags": ["databricks", "warehouse", "demo"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "editable": true,
+  "time": { "from": "now-5y", "to": "now" },
+  "refresh": "",
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Total trips",
+      "datasource": { "type": "mullerpeter-databricks-datasource", "uid": "databricks-sql" },
+      "gridPos": { "h": 6, "w": 6, "x": 0, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "short", "color": { "mode": "fixed", "fixedColor": "blue" } }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "colorMode": "value", "graphMode": "none" },
+      "targets": [
+        { "refId": "A", "datasource": { "type": "mullerpeter-databricks-datasource", "uid": "databricks-sql" }, "format": "table", "rawSql": "SELECT count(*) AS trips FROM samples.nyctaxi.trips" }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Avg fare",
+      "datasource": { "type": "mullerpeter-databricks-datasource", "uid": "databricks-sql" },
+      "gridPos": { "h": 6, "w": 6, "x": 6, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "currencyUSD", "color": { "mode": "fixed", "fixedColor": "green" } }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "colorMode": "value", "graphMode": "none" },
+      "targets": [
+        { "refId": "A", "datasource": { "type": "mullerpeter-databricks-datasource", "uid": "databricks-sql" }, "format": "table", "rawSql": "SELECT round(avg(fare_amount), 2) AS avg_fare FROM samples.nyctaxi.trips" }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Avg trip distance (mi)",
+      "datasource": { "type": "mullerpeter-databricks-datasource", "uid": "databricks-sql" },
+      "gridPos": { "h": 6, "w": 6, "x": 12, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "short", "decimals": 2, "color": { "mode": "fixed", "fixedColor": "purple" } }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "colorMode": "value", "graphMode": "none" },
+      "targets": [
+        { "refId": "A", "datasource": { "type": "mullerpeter-databricks-datasource", "uid": "databricks-sql" }, "format": "table", "rawSql": "SELECT round(avg(trip_distance), 2) AS avg_distance FROM samples.nyctaxi.trips" }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Total fares",
+      "datasource": { "type": "mullerpeter-databricks-datasource", "uid": "databricks-sql" },
+      "gridPos": { "h": 6, "w": 6, "x": 18, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "currencyUSD", "color": { "mode": "fixed", "fixedColor": "orange" } }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "colorMode": "value", "graphMode": "none" },
+      "targets": [
+        { "refId": "A", "datasource": { "type": "mullerpeter-databricks-datasource", "uid": "databricks-sql" }, "format": "table", "rawSql": "SELECT round(sum(fare_amount)) AS total_fares FROM samples.nyctaxi.trips" }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "barchart",
+      "title": "Avg fare by trip-distance bucket",
+      "datasource": { "type": "mullerpeter-databricks-datasource", "uid": "databricks-sql" },
+      "gridPos": { "h": 10, "w": 12, "x": 0, "y": 6 },
+      "fieldConfig": { "defaults": { "unit": "currencyUSD" }, "overrides": [] },
+      "options": { "xField": "bucket", "legend": { "showLegend": false } },
+      "targets": [
+        { "refId": "A", "datasource": { "type": "mullerpeter-databricks-datasource", "uid": "databricks-sql" }, "format": "table", "rawSql": "SELECT CASE WHEN trip_distance < 1 THEN '0-1 mi' WHEN trip_distance < 3 THEN '1-3 mi' WHEN trip_distance < 5 THEN '3-5 mi' WHEN trip_distance < 10 THEN '5-10 mi' ELSE '10+ mi' END AS bucket, round(avg(fare_amount), 2) AS avg_fare FROM samples.nyctaxi.trips GROUP BY 1 ORDER BY min(trip_distance)" }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "table",
+      "title": "Top routes by trip count",
+      "datasource": { "type": "mullerpeter-databricks-datasource", "uid": "databricks-sql" },
+      "gridPos": { "h": 10, "w": 12, "x": 12, "y": 6 },
+      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "options": { "showHeader": true },
+      "targets": [
+        { "refId": "A", "datasource": { "type": "mullerpeter-databricks-datasource", "uid": "databricks-sql" }, "format": "table", "rawSql": "SELECT pickup_zip AS pickup, dropoff_zip AS dropoff, count(*) AS trips, round(avg(fare_amount), 2) AS avg_fare FROM samples.nyctaxi.trips GROUP BY pickup_zip, dropoff_zip ORDER BY trips DESC LIMIT 10" }
+      ]
+    }
+  ]
+}

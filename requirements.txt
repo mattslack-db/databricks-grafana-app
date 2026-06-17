@@ -1,0 +1,4 @@
+# >=0.72: Files API download_to/upload_from support files >5 GB and parallel
+# transfer — needed to stage the ~200 MB binary bundle from a UC Volume.
+databricks-sdk>=0.72
+psycopg[binary]>=3.2
