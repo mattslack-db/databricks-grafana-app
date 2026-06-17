@@ -40,7 +40,7 @@ mkdir -p "${BIN_DIR}" "${LIB_DIR}" "${OUT_DIR}"
 # Grafana (static Go binary; distro-independent)
 # ---------------------------------------------------------------------------
 info "Downloading Grafana ${GRAFANA_VERSION} …"
-curl -fL --progress-bar -o "/tmp/${GRAFANA_TARBALL}" "${GRAFANA_URL}"
+curl -fsSL -o "/tmp/${GRAFANA_TARBALL}" "${GRAFANA_URL}"
 echo "${GRAFANA_SHA256}  /tmp/${GRAFANA_TARBALL}" | sha256sum -c - \
     || error "Grafana SHA256 mismatch"
 mkdir -p "${BIN_DIR}/grafana"
@@ -61,7 +61,7 @@ DBX_PLUGIN_URL="https://github.com/mullerpeter/databricks-grafana/releases/lates
 PLUGINS_DIR="${BIN_DIR}/grafana/data/plugins"
 mkdir -p "${PLUGINS_DIR}"
 info "Downloading Databricks datasource plugin (${DBX_PLUGIN_ID}) …"
-curl -fL --progress-bar -o "/tmp/${DBX_PLUGIN_ID}.zip" "${DBX_PLUGIN_URL}"
+curl -fsSL -o "/tmp/${DBX_PLUGIN_ID}.zip" "${DBX_PLUGIN_URL}"
 ( cd "${PLUGINS_DIR}" && unzip -q -o "/tmp/${DBX_PLUGIN_ID}.zip" )
 # The zip extracts to a top-level dir; normalize to <plugins>/<id>/plugin.json.
 if [[ ! -f "${PLUGINS_DIR}/${DBX_PLUGIN_ID}/plugin.json" ]]; then
