@@ -34,7 +34,7 @@ from pathlib import Path
 import psycopg
 
 from lib.config import load_config
-from lib.grafana_env import build_env, render_lakebase_datasource
+from lib.grafana_env import build_env, render_dashboard_provider, render_lakebase_datasource
 from lib.lakebase import mint_token, resolve_endpoint
 from lib.pgbouncer import launch as pgb_launch, reload as pgb_reload, render_ini, render_userlist
 from lib.preflight import check_create_privilege
@@ -66,6 +66,15 @@ GRAFANA_HOME = os.environ.get("GRAFANA_HOME", "bin/grafana")
 PROVISIONING_DIR = os.environ.get("PROVISIONING_DIR", "provisioning")
 DATASOURCE_YAML_PATH = os.environ.get(
     "DATASOURCE_YAML_PATH", "provisioning/datasources/lakebase.yaml"
+)
+# Dashboard provisioning: provider yaml is generated at boot (it needs the
+# ABSOLUTE json dir path, which differs local vs deployed); the dashboard JSON
+# files are static and shipped in the app source under that json dir.
+DASHBOARD_PROVIDER_PATH = os.environ.get(
+    "DASHBOARD_PROVIDER_PATH", "provisioning/dashboards/provider.yaml"
+)
+DASHBOARD_JSON_DIR = str(
+    Path(__file__).resolve().parent / "provisioning" / "dashboards" / "json"
 )
 
 # psql is used to reach the PgBouncer admin console (RELOAD; RECONNECT <db>;).
@@ -264,7 +273,20 @@ def main() -> None:
     os.chmod(DATASOURCE_YAML_PATH, 0o600)
     log.info("Wrote %s (chmod 0600)", DATASOURCE_YAML_PATH)
 
+    # 7b. Write the dashboard provisioning provider (points Grafana at the
+    #     static dashboard JSON dir). No secrets here — just an absolute path.
+    provider_path = Path(DASHBOARD_PROVIDER_PATH)
+    provider_path.parent.mkdir(parents=True, exist_ok=True)
+    provider_path.write_text(render_dashboard_provider(json_dir=DASHBOARD_JSON_DIR))
+    os.chmod(provider_path, 0o644)
+    log.info("Wrote %s (dashboards json dir: %s)", DASHBOARD_PROVIDER_PATH, DASHBOARD_JSON_DIR)
+
     # 8. Launch Grafana.
+    # GRAFANA_AUTH_PROXY=true (set in app.yaml for the deployed app) makes Grafana
+    # trust the Databricks Apps SSO proxy's forwarded identity headers. Unset
+    # locally → anonymous-Admin fallback for the docker harness (no SSO proxy).
+    auth_proxy = os.environ.get("GRAFANA_AUTH_PROXY", "false").lower() == "true"
+    log.info("Grafana auth mode: %s", "SSO auth-proxy" if auth_proxy else "anonymous (local)")
     grafana_env = {**os.environ, **build_env(
         app_port=cfg.app_port,
         pgbouncer_port=cfg.pgbouncer_port,
@@ -273,6 +295,7 @@ def main() -> None:
         client_password=client_pw,
         root_url=cfg.root_url,
         provisioning_dir=str(Path(PROVISIONING_DIR).resolve()),
+        auth_proxy=auth_proxy,
     )}
     grafana_cmd = [f"{GRAFANA_HOME}/bin/grafana", "server", "--homepath", GRAFANA_HOME]
     log.info("Launching Grafana: %s", " ".join(grafana_cmd))

@@ -50,3 +50,10 @@ env:
   # comfortable margin before the 1h Lakebase token expiry).
   - name: TOKEN_REFRESH_INTERVAL_S
     value: "3000"
+
+  # GRAFANA_AUTH_PROXY=true: trust the Databricks Apps SSO proxy's forwarded
+  # identity headers (X-Forwarded-Email / X-Forwarded-Preferred-Username) for
+  # auth. Users are auto-provisioned as Editor; anonymous access is disabled.
+  # Leave unset locally (docker harness) to fall back to anonymous Admin.
+  - name: GRAFANA_AUTH_PROXY
+    value: "true"
