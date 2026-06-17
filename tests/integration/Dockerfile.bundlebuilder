@@ -1,0 +1,37 @@
+# tests/integration/Dockerfile.bundlebuilder
+#
+# Builds the bin/ bundle (Grafana + PgBouncer + stunnel + psql + their .so deps)
+# on the SAME base as the Databricks Apps runtime — Ubuntu 22.04 LTS (glibc
+# 2.35) — so every native binary and bundled library is glibc-compatible with
+# the deployment target. See scripts/assemble_bundle.sh for the rationale.
+#
+# Usage (from repo root, with colima/docker running):
+#   docker build --platform linux/amd64 \
+#       -f tests/integration/Dockerfile.bundlebuilder -t grafana-bundle-builder .
+#   docker run --rm --platform linux/amd64 \
+#       -v "$HOME/grafana-bundle-stage:/out" grafana-bundle-builder
+#   # -> $HOME/grafana-bundle-stage/bin.tar.gz
+FROM --platform=linux/amd64 ubuntu:22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Base tools + the PostgreSQL APT (PGDG) repo, then PgBouncer 1.25.x, stunnel4,
+# and postgresql-client-16. apt verifies repo GPG signatures, so the binaries'
+# provenance is the signed Ubuntu + PGDG archives.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        curl ca-certificates gnupg binutils file tar xz-utils \
+    && install -d /usr/share/postgresql-common/pgdg \
+    && curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+        -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
+    && echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt jammy-pgdg main" \
+        > /etc/apt/sources.list.d/pgdg.list \
+    && apt-get update && apt-get install -y --no-install-recommends \
+        pgbouncer \
+        stunnel4 \
+        postgresql-client-16 \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY scripts/assemble_bundle.sh /assemble_bundle.sh
+RUN chmod +x /assemble_bundle.sh
+
+CMD ["bash", "/assemble_bundle.sh"]

@@ -58,8 +58,23 @@ def reload(psql_binary: str, port: int, admin_user: str, admin_password: str,
     # userlist.txt (with admin_password) AND in admin_users in pgbouncer.ini.
     # The password is passed via PGPASSWORD in the subprocess env — NEVER on
     # argv — so it cannot leak via `ps`.
+    # RELOAD and RECONNECT are issued as SEPARATE simple queries (separate -c
+    # flags). The PgBouncer admin console executes one admin command per query
+    # string; combining them as "RELOAD; RECONNECT x;" in a single -c made psql
+    # send one multi-statement simple query, which the console rejects (psql
+    # exits non-zero). Two -c flags = two queries = both run.
     env = {**os.environ, "PGPASSWORD": admin_password}
-    subprocess.run([psql_binary, "-h", "127.0.0.1", "-p", str(port),
-                    "-U", admin_user, "-d", "pgbouncer",
-                    "-c", f"RELOAD; RECONNECT {db_name};"],
-                   check=True, env=env)
+    result = subprocess.run(
+        [psql_binary, "-h", "127.0.0.1", "-p", str(port),
+         "-U", admin_user, "-d", "pgbouncer",
+         "-c", "RELOAD;", "-c", f"RECONNECT {db_name};"],
+        env=env, capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        # Surface stderr/stdout — a swallowed reload error means the server
+        # token silently goes stale and every connection fails after the token
+        # TTL expires (~1h). Make the failure loud and diagnosable.
+        raise RuntimeError(
+            f"PgBouncer reload failed (exit {result.returncode}): "
+            f"stderr={result.stderr.strip()!r} stdout={result.stdout.strip()!r}"
+        )
