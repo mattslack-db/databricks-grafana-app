@@ -15,12 +15,16 @@
 
 # COMMAND ----------
 
+# MAGIC %pip install -q "databricks-sdk>=0.72" "psycopg[binary]>=3.2"
+
+# COMMAND ----------
+
 # Config — adjust if you've changed the Lakebase project or database name
 ENDPOINT_PATH = "projects/grafana-app/branches/production/endpoints/primary"
 DATABASE      = "grafana"
 
 # How long to run and how often to insert a new data point
-INTERVAL_S    = 30   # seconds between inserts (matches Grafana refresh)
+INTERVAL_S    = 5    # seconds between inserts
 RUN_FOR_S     = 3600 # total run time in seconds; set to None to run until manually stopped
 
 # COMMAND ----------
