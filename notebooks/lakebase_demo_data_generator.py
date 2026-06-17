@@ -65,23 +65,30 @@ def _hour_factor(ts: datetime) -> float:
     h = ts.hour + ts.minute / 60
     return 0.6 + 0.4 * math.sin(math.pi * (h - 2) / 12)
 
-def generate_row(ts: datetime, service: str):
-    factor = _hour_factor(ts)
-    noise  = random.gauss(1.0, 0.08)
+def generate_batch(window_start: datetime, window_end: datetime, service: str):
+    """Generate up to 200 sample rows for a service, spread across the time window."""
+    n = random.randint(1, 200)
+    rows = []
+    window_s = (window_end - window_start).total_seconds()
+    for _ in range(n):
+        # Spread timestamps randomly across the window
+        offset = random.uniform(0, window_s)
+        ts = window_start.replace(microsecond=0) if window_s == 0 else \
+             datetime.fromtimestamp(window_start.timestamp() + offset, tz=timezone.utc)
 
-    rpm    = max(10, BASE_RPM[service] * factor * noise)
-    # latency rises slightly under load
-    lat    = max(20, 60 + (rpm / BASE_RPM[service]) * 30 + random.gauss(0, 8))
+        factor = _hour_factor(ts)
+        rpm    = max(10, BASE_RPM[service] * factor * random.gauss(1.0, 0.08))
+        lat    = max(20, 60 + (rpm / BASE_RPM[service]) * 30 + random.gauss(0, 8))
 
-    return [
-        (ts, service, "requests_per_min", round(rpm, 2)),
-        (ts, service, "p95_latency_ms",   round(lat, 2)),
-    ]
+        rows.append((ts, service, "requests_per_min", round(rpm, 2)))
+        rows.append((ts, service, "p95_latency_ms",   round(lat, 2)))
+    return rows
 
 # COMMAND ----------
 
 deadline = (time.monotonic() + RUN_FOR_S) if RUN_FOR_S else None
 iteration = 0
+prev_tick  = datetime.now(timezone.utc)
 
 with psycopg.connect(
     host=host, port=5432, dbname=DATABASE,
@@ -93,10 +100,12 @@ with psycopg.connect(
     print("Connected. Inserting rows every", INTERVAL_S, "s …")
 
     while True:
-        now = datetime.now(timezone.utc)
+        time.sleep(INTERVAL_S)
+        now  = datetime.now(timezone.utc)
         rows = []
         for svc in SERVICES:
-            rows.extend(generate_row(now, svc))
+            rows.extend(generate_batch(prev_tick, now, svc))
+        prev_tick = now
 
         with conn.cursor() as cur:
             cur.executemany(
@@ -105,10 +114,8 @@ with psycopg.connect(
             )
 
         iteration += 1
-        print(f"[{now:%H:%M:%S}] inserted {len(rows)} rows (iteration {iteration})")
+        print(f"[{now:%H:%M:%S}] inserted {len(rows)} rows across {len(SERVICES)} services (iteration {iteration})")
 
         if deadline and time.monotonic() >= deadline:
             print("Run complete.")
             break
-
-        time.sleep(INTERVAL_S)
