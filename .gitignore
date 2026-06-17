@@ -16,3 +16,6 @@ pgbouncer.pid
 provisioning/datasources/lakebase.yaml
 provisioning/datasources/databricks.yaml
 provisioning/dashboards/provider.yaml
+.coverage
+htmlcov/
+.mypy_cache/
