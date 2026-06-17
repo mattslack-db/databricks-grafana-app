@@ -49,6 +49,30 @@ tar -xzf "/tmp/${GRAFANA_TARBALL}" --strip-components=1 -C "${BIN_DIR}/grafana"
 info "Grafana staged ($(file -b "${BIN_DIR}/grafana/bin/grafana" | cut -c1-40)…)"
 
 # ---------------------------------------------------------------------------
+# Databricks SQL warehouse datasource plugin (OSS community plugin,
+# mullerpeter-databricks-datasource). Bundled into the Grafana plugins dir so
+# it ships with the app (the Apps runtime has no plugin-catalog access). It is
+# unsigned — startup.py allow-lists it via GF_PLUGINS_ALLOW_LOADING_UNSIGNED.
+# The plugin's backend is a Go binary; building/bundling on jammy keeps it
+# glibc-compatible with the runtime.
+# ---------------------------------------------------------------------------
+DBX_PLUGIN_ID="mullerpeter-databricks-datasource"
+DBX_PLUGIN_URL="https://github.com/mullerpeter/databricks-grafana/releases/latest/download/${DBX_PLUGIN_ID}.zip"
+PLUGINS_DIR="${BIN_DIR}/grafana/data/plugins"
+mkdir -p "${PLUGINS_DIR}"
+info "Downloading Databricks datasource plugin (${DBX_PLUGIN_ID}) …"
+curl -fL --progress-bar -o "/tmp/${DBX_PLUGIN_ID}.zip" "${DBX_PLUGIN_URL}"
+( cd "${PLUGINS_DIR}" && unzip -q -o "/tmp/${DBX_PLUGIN_ID}.zip" )
+# The zip extracts to a top-level dir; normalize to <plugins>/<id>/plugin.json.
+if [[ ! -f "${PLUGINS_DIR}/${DBX_PLUGIN_ID}/plugin.json" ]]; then
+    found="$(find "${PLUGINS_DIR}" -maxdepth 2 -name plugin.json | head -1)"
+    [[ -n "${found}" ]] || error "plugin.json not found after extracting ${DBX_PLUGIN_ID}"
+    src="$(dirname "${found}")"
+    [[ "${src}" != "${PLUGINS_DIR}/${DBX_PLUGIN_ID}" ]] && mv "${src}" "${PLUGINS_DIR}/${DBX_PLUGIN_ID}"
+fi
+info "Databricks plugin staged at grafana/data/plugins/${DBX_PLUGIN_ID}"
+
+# ---------------------------------------------------------------------------
 # apt-installed binaries (jammy / glibc 2.35)
 # ---------------------------------------------------------------------------
 copy_binary() {

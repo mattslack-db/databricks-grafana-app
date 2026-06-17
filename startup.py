@@ -34,7 +34,12 @@ from pathlib import Path
 import psycopg
 
 from lib.config import load_config
-from lib.grafana_env import build_env, render_dashboard_provider, render_lakebase_datasource
+from lib.grafana_env import (
+    build_env,
+    render_dashboard_provider,
+    render_databricks_datasource,
+    render_lakebase_datasource,
+)
 from lib.lakebase import mint_token, resolve_endpoint
 from lib.pgbouncer import launch as pgb_launch, reload as pgb_reload, render_ini, render_userlist
 from lib.preflight import check_create_privilege
@@ -280,6 +285,28 @@ def main() -> None:
     provider_path.write_text(render_dashboard_provider(json_dir=DASHBOARD_JSON_DIR))
     os.chmod(provider_path, 0o644)
     log.info("Wrote %s (dashboards json dir: %s)", DASHBOARD_PROVIDER_PATH, DASHBOARD_JSON_DIR)
+
+    # 7c. Optionally provision the Databricks SQL warehouse datasource. Only when
+    #     a warehouse path is configured AND the app's service-principal OAuth
+    #     creds are present (injected by the Databricks Apps runtime). Auth is
+    #     OAuth2 M2M, so no static token is stored. Skipped locally (no SP creds).
+    wh_path = os.environ.get("DATABRICKS_WAREHOUSE_HTTP_PATH")
+    dbx_host = os.environ.get("DATABRICKS_HOST", "")
+    dbx_client_id = os.environ.get("DATABRICKS_CLIENT_ID")
+    dbx_client_secret = os.environ.get("DATABRICKS_CLIENT_SECRET")
+    if wh_path and dbx_client_id and dbx_client_secret:
+        hostname = dbx_host.replace("https://", "").replace("http://", "").rstrip("/")
+        dbx_ds = render_databricks_datasource(
+            hostname=hostname, http_path=wh_path,
+            client_id=dbx_client_id, client_secret=dbx_client_secret,
+        )
+        dbx_ds_path = Path("provisioning/datasources/databricks.yaml")
+        dbx_ds_path.write_text(dbx_ds)
+        os.chmod(dbx_ds_path, 0o600)
+        log.info("Wrote Databricks SQL datasource (warehouse path=%s, M2M as SP)", wh_path)
+    else:
+        log.info("Databricks SQL datasource not configured "
+                 "(need DATABRICKS_WAREHOUSE_HTTP_PATH + SP creds); skipping")
 
     # 8. Launch Grafana.
     # GRAFANA_AUTH_PROXY=true (set in app.yaml for the deployed app) makes Grafana

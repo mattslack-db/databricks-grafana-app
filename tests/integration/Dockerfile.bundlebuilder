@@ -19,7 +19,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 # and postgresql-client-16. apt verifies repo GPG signatures, so the binaries'
 # provenance is the signed Ubuntu + PGDG archives.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        curl ca-certificates gnupg binutils file tar xz-utils \
+        curl ca-certificates gnupg binutils file tar xz-utils unzip \
     && install -d /usr/share/postgresql-common/pgdg \
     && curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
         -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \

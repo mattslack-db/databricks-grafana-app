@@ -75,12 +75,21 @@ def build_env(*, app_port: int, pgbouncer_port: int, db_name: str,
         "GF_SERVER_ROOT_URL": root_url,
         "GF_SERVER_SERVE_FROM_SUB_PATH": _serve_from_sub_path(root_url),
         "GF_PATHS_PROVISIONING": provisioning_dir,
+        # The Databricks SQL warehouse datasource (mullerpeter community plugin)
+        # is unsigned, so it must be explicitly allow-listed to load. Harmless
+        # when the plugin isn't bundled.
+        "GF_PLUGINS_ALLOW_LOADING_UNSIGNED_PLUGINS": DATABRICKS_PLUGIN_ID,
         **_auth_env(auth_proxy=auth_proxy),
     }
 
 # Stable datasource UID so provisioned dashboards can reference Lakebase by a
 # fixed id (instead of a name that could change). Dashboards use this UID.
 LAKEBASE_DATASOURCE_UID = "lakebase"
+
+# Databricks SQL warehouse datasource (OSS community plugin). Stable uid so
+# dashboards can target it; the plugin is unsigned (see allow-list in build_env).
+DATABRICKS_PLUGIN_ID = "mullerpeter-databricks-datasource"
+DATABRICKS_DATASOURCE_UID = "databricks-sql"
 
 
 def render_lakebase_datasource(*, pgbouncer_port: int, db_name: str,
@@ -100,6 +109,34 @@ datasources:
       postgresVersion: 1700
     secureJsonData:
       password: {client_password}
+"""
+
+
+def render_databricks_datasource(*, hostname: str, http_path: str,
+                                 client_id: str, client_secret: str) -> str:
+    """Databricks SQL warehouse datasource (mullerpeter community plugin),
+    authenticated via OAuth2 machine-to-machine using the app's service
+    principal (client_id/client_secret injected by the Databricks Apps runtime).
+
+    hostname: workspace host WITHOUT scheme (e.g. dbc-x.cloud.databricks.com).
+    http_path: the warehouse HTTP path (e.g. sql/1.0/warehouses/<id>).
+    """
+    return f"""apiVersion: 1
+datasources:
+  - name: Databricks SQL
+    uid: {DATABRICKS_DATASOURCE_UID}
+    type: {DATABRICKS_PLUGIN_ID}
+    access: proxy
+    isDefault: false
+    jsonData:
+      hostname: {hostname}
+      path: {http_path}
+      port: "443"
+      authenticationMethod: m2m
+      clientId: {client_id}
+      oauthScopes: all-apis
+    secureJsonData:
+      clientSecret: {client_secret}
 """
 
 

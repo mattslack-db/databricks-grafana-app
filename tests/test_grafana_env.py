@@ -74,3 +74,25 @@ def test_render_dashboard_provider_points_at_json_dir():
     assert "type: file" in y
     assert "path: /app/src/provisioning/dashboards/json" in y
     assert "providers:" in y
+
+
+def test_render_databricks_datasource_m2m():
+    from lib.grafana_env import render_databricks_datasource
+    y = render_databricks_datasource(
+        hostname="dbc-x.cloud.databricks.com",
+        http_path="sql/1.0/warehouses/abc123",
+        client_id="sp-client-id", client_secret="sp-secret")
+    assert "type: mullerpeter-databricks-datasource" in y
+    assert "hostname: dbc-x.cloud.databricks.com" in y
+    assert "path: sql/1.0/warehouses/abc123" in y
+    assert "authenticationMethod: m2m" in y
+    assert "clientId: sp-client-id" in y
+    assert "clientSecret: sp-secret" in y
+    assert "uid: databricks-sql" in y
+
+
+def test_build_env_allows_unsigned_databricks_plugin():
+    env = build_env(app_port=8080, pgbouncer_port=6432, db_name="grafana",
+                    client_user="sp", client_password="pw",
+                    root_url="https://x", provisioning_dir="/p")
+    assert env["GF_PLUGINS_ALLOW_LOADING_UNSIGNED_PLUGINS"] == "mullerpeter-databricks-datasource"

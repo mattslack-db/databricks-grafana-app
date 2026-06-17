@@ -14,4 +14,5 @@ userlist.txt
 stunnel.conf
 pgbouncer.pid
 provisioning/datasources/lakebase.yaml
+provisioning/datasources/databricks.yaml
 provisioning/dashboards/provider.yaml
