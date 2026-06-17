@@ -145,17 +145,21 @@ databricks secrets put-acl grafana-app \
 
 ### 5. Configure `app.yaml`
 
-Update the values in `app.yaml` to match your environment:
+Copy the template and fill in the placeholders:
 
-| Variable | What to set |
+```bash
+cp app.yaml.template app.yaml
+```
+
+| Placeholder | What to set |
 |---|---|
-| `GRAFANA_BUNDLE_VOLUME_PATH` | UC Volume path, e.g. `/Volumes/catalog/schema/volume/bin.tar.gz` |
-| `LAKEBASE_ENDPOINT_PATH` | `projects/grafana-app/branches/production/endpoints/primary` |
-| `LAKEBASE_DATABASE_NAME` | `grafana` |
-| `LAKEBASE_HOST` | Endpoint hostname from step 1 |
-| `LAKEBASE_DB_USER` | App SP `applicationId` (UUID) |
-| `GRAFANA_ROOT_URL` | Leave blank until first deploy; set to `https://<app>-<workspace-id>.databricksapps.com` after |
-| `DATABRICKS_WAREHOUSE_HTTP_PATH` | `sql/1.0/warehouses/<id>` — omit to disable the SQL warehouse datasource |
+| `<UC_VOLUME_PATH>` | e.g. `/Volumes/catalog/schema/volume/bin.tar.gz` |
+| `<LAKEBASE_PROJECT>` | Lakebase project name, e.g. `grafana-app` |
+| `<LAKEBASE_HOST>` | Endpoint hostname from step 1 |
+| `<APP_SP_UUID>` | App SP `applicationId` (UUID) — known after first deploy |
+| `<APP_URL>` | Leave blank on first deploy; set to `https://<app>-<workspace-id>.databricksapps.com` after |
+| `<WAREHOUSE_HTTP_PATH>` | `sql/1.0/warehouses/<id>` — remove the entry entirely to disable |
+| `<SECRET_SCOPE>` / `<SECRET_KEY>` | Secret scope and key from step 4, e.g. `grafana-app` / `grafana_secret_key` |
 
 ---
 

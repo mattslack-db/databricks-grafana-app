@@ -1,0 +1,108 @@
+command: ["python", "startup.py"]
+
+# app.yaml.template — copy this to app.yaml and fill in every <PLACEHOLDER>.
+#
+# Values to replace:
+#
+#   <UC_VOLUME_PATH>       Full UC Volume path to your bin.tar.gz, e.g.
+#                          /Volumes/my_catalog/my_schema/my_volume/bin.tar.gz
+#
+#   <LAKEBASE_PROJECT>     Lakebase project name, e.g. grafana-app
+#                          Full path becomes:
+#                          projects/<LAKEBASE_PROJECT>/branches/production/endpoints/primary
+#
+#   <LAKEBASE_HOST>        Lakebase endpoint hostname (static, from
+#                          `databricks postgres list-endpoints ... -o json | jq -r '.[0].status.hosts.host'`)
+#                          e.g. ep-name-id.database.us-east-1.cloud.databricks.com
+#
+#   <APP_SP_UUID>          applicationId (UUID) of the Databricks App's service principal.
+#                          After first deploy: `databricks apps get <app-name> -o json | jq -r '.service_principal_client_id'`
+#                          e.g. 12345678-abcd-ef01-2345-6789abcdef01
+#
+#   <APP_URL>              Public URL assigned by Databricks Apps after first deploy.
+#                          Leave blank on first deploy; update after.
+#                          e.g. https://grafana-app-1234567890.aws.databricksapps.com
+#
+#   <WAREHOUSE_HTTP_PATH>  Databricks SQL warehouse HTTP path, e.g.
+#                          sql/1.0/warehouses/abc123def456
+#                          Omit the DATABRICKS_WAREHOUSE_HTTP_PATH entry entirely to
+#                          disable the SQL warehouse datasource.
+#
+#   <SECRET_SCOPE>         Databricks secret scope holding the Grafana session key,
+#                          e.g. grafana-app (create with `databricks secrets create-scope`)
+#
+#   <SECRET_KEY>           Key name within the scope, e.g. grafana_secret_key
+#
+# NOTE: Databricks Apps injects DATABRICKS_HOST, DATABRICKS_CLIENT_ID,
+# DATABRICKS_CLIENT_SECRET (or DATABRICKS_TOKEN), and DATABRICKS_APP_PORT
+# automatically — do not set those here.
+
+env:
+  # GRAFANA_BUNDLE_VOLUME_PATH: UC Volume path to the gzipped binary bundle.
+  # On cold start, startup.py downloads + extracts this into bin/ (the Grafana
+  # binary is ~360 MB, far above the 10 MB Apps source-file limit, so it cannot
+  # ship in the app source). The app's service principal needs READ on this
+  # volume (USE CATALOG + USE SCHEMA + READ VOLUME), granted at deploy time.
+  - name: GRAFANA_BUNDLE_VOLUME_PATH
+    value: "<UC_VOLUME_PATH>"
+
+  - name: LAKEBASE_ENDPOINT_PATH
+    value: "projects/<LAKEBASE_PROJECT>/branches/production/endpoints/primary"
+
+  - name: LAKEBASE_DATABASE_NAME
+    value: "grafana"
+
+  # LAKEBASE_HOST: the static Lakebase endpoint hostname for direct connections.
+  # Avoids an extra API call to resolve the host on every cold start.
+  - name: LAKEBASE_HOST
+    value: "<LAKEBASE_HOST>"
+
+  # LAKEBASE_DB_USER: Postgres user identity Lakebase expects.
+  # Must be the applicationId (UUID) of the app's service principal —
+  # the SP that was granted CREATE on the Grafana database.
+  # Known after first deploy: databricks apps get <name> -o json | jq -r '.service_principal_client_id'
+  - name: LAKEBASE_DB_USER
+    value: "<APP_SP_UUID>"
+
+  # GRAFANA_ROOT_URL: the public URL Grafana uses for redirects and links.
+  # Only known after the first deploy (Databricks Apps assigns the URL).
+  # Set to https://<app-name>-<workspace-id>.databricksapps.com after deploy.
+  - name: GRAFANA_ROOT_URL
+    value: "<APP_URL>"
+
+  # Token refresh interval in seconds (default 3000 gives comfortable margin
+  # before the 1h Lakebase OAuth token expiry).
+  - name: TOKEN_REFRESH_INTERVAL_S
+    value: "3000"
+
+  # GRAFANA_AUTH_PROXY=true: trust the Databricks Apps SSO proxy's forwarded
+  # identity headers (X-Forwarded-Email / X-Forwarded-Preferred-Username) for
+  # auth. Users are auto-provisioned as Editor; anonymous access is disabled.
+  - name: GRAFANA_AUTH_PROXY
+    value: "true"
+
+  # Verify Lakebase's TLS certificate chain in stunnel (authenticated TLS, not
+  # just encrypted). Recommended for production.
+  - name: STUNNEL_VERIFY_CHAIN
+    value: "true"
+
+  # DATABRICKS_WAREHOUSE_HTTP_PATH: enables the Databricks SQL warehouse
+  # datasource (mullerpeter community plugin), authenticated via OAuth2 M2M
+  # using the app SP's injected DATABRICKS_CLIENT_ID/SECRET. The SP needs
+  # CAN_USE on this warehouse + access to the data it queries.
+  # Remove this entry entirely to disable the Databricks SQL datasource.
+  - name: DATABRICKS_WAREHOUSE_HTTP_PATH
+    value: "<WAREHOUSE_HTTP_PATH>"
+
+# Secret resources: grant the app's SP READ access so startup.py can fetch the
+# Grafana session-signing key at boot. Sessions survive container restarts.
+# Create the secret first:
+#   databricks secrets create-scope <SECRET_SCOPE>
+#   databricks secrets put-secret <SECRET_SCOPE> <SECRET_KEY> --string-value "$(python3 -c 'import secrets; print(secrets.token_hex(32))')"
+#   databricks secrets put-acl <SECRET_SCOPE> <APP_SP_UUID> READ
+resources:
+  - name: grafana-secret-key
+    secret:
+      scope: <SECRET_SCOPE>
+      key: <SECRET_KEY>
+      permission: READ
