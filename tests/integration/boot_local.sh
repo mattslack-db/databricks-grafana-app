@@ -13,13 +13,32 @@ have_binaries() {
   [[ -x bin/grafana/bin/grafana && -x bin/pgbouncer && -x bin/stunnel && -x bin/psql ]] \
     && [[ -d bin/lib ]] && [[ -n "$(ls -A bin/lib 2>/dev/null)" ]]
 }
-echo "== fetch binaries (idempotent, retries transient net) =="
-for attempt in 1 2 3; do
-  if have_binaries; then break; fi
-  echo "fetch attempt ${attempt}…"
-  bash scripts/fetch_binaries.sh && break || { echo "fetch failed (attempt ${attempt}); retrying"; sleep 3; }
-done
-have_binaries || { echo "FATAL: binaries/libs missing after retries"; exit 1; }
+
+# Bundle path: honour GRAFANA_BUNDLE_TARBALL if set, else look in the default
+# staging dir used by scripts/assemble_bundle.sh when building on colima.
+BUNDLE_TARBALL="${GRAFANA_BUNDLE_TARBALL:-${HOME}/grafana-bundle-stage/bin.tar.gz}"
+
+echo "== stage binaries (idempotent) =="
+if have_binaries; then
+  echo "bin/ already populated; skipping extraction"
+elif [[ -f "${BUNDLE_TARBALL}" ]]; then
+  echo "Extracting bundle from ${BUNDLE_TARBALL} …"
+  mkdir -p bin
+  tar -xzf "${BUNDLE_TARBALL}" -C bin
+  have_binaries || { echo "FATAL: bundle extracted but expected binaries still missing"; exit 1; }
+  echo "Extraction complete"
+else
+  cat >&2 <<EOF
+FATAL: bin/ is not pre-populated and no bundle tarball found.
+
+Expected at: ${BUNDLE_TARBALL}
+Override with: GRAFANA_BUNDLE_TARBALL=/path/to/bin.tar.gz
+
+To build the bundle (requires colima + linux/amd64):
+  bash scripts/assemble_bundle.sh   (outputs ~/grafana-bundle-stage/bin.tar.gz)
+EOF
+  exit 1
+fi
 
 echo "== binaries ready =="
 echo "== sanity: binary archs =="

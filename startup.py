@@ -83,7 +83,7 @@ DASHBOARD_JSON_DIR = str(
 )
 
 # psql is used to reach the PgBouncer admin console (RELOAD; RECONNECT <db>;).
-# Default points at the bundled binary staged by scripts/fetch_binaries.sh.
+# Default points at the bundled binary staged by scripts/assemble_bundle.sh.
 # Override with PSQL_BINARY env var (the local harness may override this).
 PSQL_BINARY = os.environ.get("PSQL_BINARY", "bin/psql")
 
@@ -148,7 +148,7 @@ def _prepend_lib_path() -> None:
 
     This must be called before any child process is launched so that pgbouncer,
     stunnel, and psql all inherit the bundled shared libraries from bin/lib/
-    (staged by scripts/fetch_binaries.sh) rather than requiring apt-installed
+    (staged by scripts/assemble_bundle.sh) rather than requiring apt-installed
     runtime packages. The Databricks Apps runtime has no apt access, so all
     non-glibc .so files are bundled there.
 

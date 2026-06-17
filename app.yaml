@@ -72,3 +72,13 @@ env:
   # fevm-classic-serverless warehouse id = de8680be2095a2e9.
   - name: DATABRICKS_WAREHOUSE_HTTP_PATH
     value: "sql/1.0/warehouses/de8680be2095a2e9"
+
+  # Grafana cookie/session signing key — sourced from a Databricks secret scope
+  # so it is stable across restarts (without this, Grafana regenerates a random
+  # key at each boot, invalidating all existing sessions). Stored in scope
+  # 'grafana-app', key 'grafana_secret_key'. The value flows to Grafana via
+  # os.environ (startup.py does {**os.environ, **build_env(...)}).
+  - name: GF_SECURITY_SECRET_KEY
+    valueFrom:
+      secretScope: grafana-app
+      secretKey: grafana_secret_key
