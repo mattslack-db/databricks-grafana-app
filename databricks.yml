@@ -27,6 +27,10 @@ sync:
     - "tests/integration/**"
     - "**/__pycache__/**"
     - ".pytest_cache/**"
+  # NOTE: runtime artifacts that startup.py regenerates on boot (pgbouncer.ini,
+  # userlist.txt, stunnel.conf, pgbouncer.pid, provisioning/datasources/
+  # lakebase.yaml) contain secrets and are kept out of the upload via .gitignore
+  # (DAB honors .gitignore), so they are deliberately NOT listed here.
 
 targets:
   dev:
