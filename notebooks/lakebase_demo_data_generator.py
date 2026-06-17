@@ -40,14 +40,13 @@ from databricks.sdk import WorkspaceClient
 
 w = WorkspaceClient()
 
-# Mint a fresh OAuth token for Lakebase
-cred = w.postgres.generate_database_credential(endpoint_path=ENDPOINT_PATH)
+# Mint a fresh OAuth token for Lakebase (positional path, no keyword)
+cred = w.postgres.generate_database_credential(ENDPOINT_PATH)
 token = cred.token
 
-# Resolve the endpoint host
-endpoints = list(w.postgres.list_endpoints(
-    parent=f"projects/grafana-app/branches/production"
-))
+# Resolve the endpoint host (parent = branch path)
+branch_path = ENDPOINT_PATH.rsplit("/endpoints", 1)[0]
+endpoints = list(w.postgres.list_endpoints(branch_path))
 host = endpoints[0].status.hosts.host
 
 print(f"Connecting to {host} / {DATABASE}")
