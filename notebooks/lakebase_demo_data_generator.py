@@ -19,6 +19,10 @@
 
 # COMMAND ----------
 
+# MAGIC %restart_python
+
+# COMMAND ----------
+
 # Config — adjust if you've changed the Lakebase project or database name
 ENDPOINT_PATH = "projects/grafana-app/branches/production/endpoints/primary"
 DATABASE      = "grafana"
