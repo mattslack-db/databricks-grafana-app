@@ -83,12 +83,19 @@ def test_render_databricks_datasource_m2m():
         http_path="sql/1.0/warehouses/abc123",
         client_id="sp-client-id", client_secret="sp-secret")
     assert "type: mullerpeter-databricks-datasource" in y
-    assert "hostname: dbc-x.cloud.databricks.com" in y
-    assert "path: sql/1.0/warehouses/abc123" in y
+    # Values are single-quoted for YAML safety.
+    assert "hostname: 'dbc-x.cloud.databricks.com'" in y
+    assert "path: 'sql/1.0/warehouses/abc123'" in y
     assert "authenticationMethod: m2m" in y
-    assert "clientId: sp-client-id" in y
-    assert "clientSecret: sp-secret" in y
+    assert "clientId: 'sp-client-id'" in y
+    assert "clientSecret: 'sp-secret'" in y
     assert "uid: databricks-sql" in y
+
+
+def test_yq_escapes_embedded_single_quotes():
+    from lib.grafana_env import _yq
+    assert _yq("ab'cd") == "'ab''cd'"
+    assert _yq("plain") == "'plain'"
 
 
 def test_build_env_allows_unsigned_databricks_plugin():

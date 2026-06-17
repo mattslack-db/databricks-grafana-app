@@ -1,4 +1,5 @@
 from __future__ import annotations
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Optional
 
@@ -18,7 +19,7 @@ class AppConfig:
     refresh_interval_s: int = 3000
 
 
-def load_config(env: dict) -> AppConfig:
+def load_config(env: Mapping[str, str]) -> AppConfig:
     missing = [k for k in REQUIRED if not env.get(k)]
     if missing:
         raise ValueError(f"Missing required env vars: {', '.join(missing)}")

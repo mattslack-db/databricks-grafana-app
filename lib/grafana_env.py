@@ -51,6 +51,12 @@ def _auth_env(*, auth_proxy: bool) -> dict:
         # Re-sync identity at most once a minute (cheap; headers are stable).
         "GF_AUTH_PROXY_SYNC_TTL": "60",
         "GF_AUTH_PROXY_ENABLE_LOGIN_TOKEN": "false",
+        # Only trust the forwarded auth header from the local SSO proxy (it
+        # terminates externally and reaches Grafana over loopback). Defense in
+        # depth against header spoofing if the port were ever directly reachable.
+        # Override GF_AUTH_PROXY_WHITELIST in app.yaml if the platform proxy
+        # connects from a non-loopback address.
+        "GF_AUTH_PROXY_WHITELIST": "127.0.0.1, ::1",
         # No anonymous access and no login form — identity comes only from the
         # trusted SSO proxy in front of the app.
         "GF_AUTH_ANONYMOUS_ENABLED": "false",
@@ -92,6 +98,15 @@ DATABRICKS_PLUGIN_ID = "mullerpeter-databricks-datasource"
 DATABRICKS_DATASOURCE_UID = "databricks-sql"
 
 
+def _yq(value: str) -> str:
+    """Single-quote a scalar for safe YAML embedding. Values like client_id,
+    client_secret, http_path and hostname come from env and may contain YAML
+    special characters (':', '#', leading '{'); quoting + doubling embedded
+    single quotes prevents a malformed datasource file that Grafana would
+    reject with an opaque error."""
+    return "'" + str(value).replace("'", "''") + "'"
+
+
 def render_lakebase_datasource(*, pgbouncer_port: int, db_name: str,
                                client_user: str, client_password: str) -> str:
     return f"""apiVersion: 1
@@ -101,14 +116,14 @@ datasources:
     type: postgres
     access: proxy
     url: 127.0.0.1:{pgbouncer_port}
-    database: {db_name}
-    user: {client_user}
+    database: {_yq(db_name)}
+    user: {_yq(client_user)}
     isDefault: true
     jsonData:
       sslmode: disable
       postgresVersion: 1700
     secureJsonData:
-      password: {client_password}
+      password: {_yq(client_password)}
 """
 
 
@@ -129,14 +144,14 @@ datasources:
     access: proxy
     isDefault: false
     jsonData:
-      hostname: {hostname}
-      path: {http_path}
+      hostname: {_yq(hostname)}
+      path: {_yq(http_path)}
       port: "443"
       authenticationMethod: m2m
-      clientId: {client_id}
+      clientId: {_yq(client_id)}
       oauthScopes: all-apis
     secureJsonData:
-      clientSecret: {client_secret}
+      clientSecret: {_yq(client_secret)}
 """
 
 

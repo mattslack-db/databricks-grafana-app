@@ -99,7 +99,15 @@ def stage_binaries(
 
     with tarfile.open(local_tar, "r:gz") as tar:
         _assert_safe_members(tar, str(dest))
-        tar.extractall(str(dest))
+        # filter="data" (Python 3.11.4+/3.12) strips setuid/setgid bits,
+        # device/special files, and absolute/escaping paths as a second layer
+        # behind _assert_safe_members. Exec bits we need are re-asserted below.
+        # Fall back on older patch levels that lack the param (the manual
+        # path-traversal guard above still applies).
+        try:
+            tar.extractall(str(dest), filter="data")
+        except TypeError:
+            tar.extractall(str(dest))
 
     # Remove the tarball to reclaim space; the extracted tree is what we need.
     local_tar.unlink(missing_ok=True)

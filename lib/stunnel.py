@@ -23,9 +23,13 @@ def render_conf(*, accept_port: int, server_host: str, server_port: int,
     the system CA store and pin the hostname — Lakebase uses a public CA cert.
     """
     if verify_chain:
+        # CAfile (the concatenated Ubuntu/Debian system bundle) is more robust
+        # than CApath, which requires c_rehash hashed symlinks to be present.
+        # checkHost pins the Lakebase hostname (matches the cert SAN, incl.
+        # wildcard). Lakebase presents a publicly-trusted certificate.
         verify_block = (
             "verifyChain = yes\n"
-            "CApath = /etc/ssl/certs\n"
+            "CAfile = /etc/ssl/certs/ca-certificates.crt\n"
             f"checkHost = {server_host}\n"
         )
     else:

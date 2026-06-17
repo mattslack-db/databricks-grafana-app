@@ -2,7 +2,7 @@ from unittest.mock import patch
 
 import pytest
 
-from lib.pgbouncer import reload, render_ini, render_userlist, scram_or_plain
+from lib.pgbouncer import reload, render_ini, render_userlist
 
 def test_render_userlist_quotes_user_and_password():
     out = render_userlist("grafana_local", "secretpw")

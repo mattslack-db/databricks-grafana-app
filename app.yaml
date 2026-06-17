@@ -58,6 +58,13 @@ env:
   - name: GRAFANA_AUTH_PROXY
     value: "true"
 
+  # Verify Lakebase's TLS certificate chain in stunnel (authenticated TLS, not
+  # just encrypted) so the loopback->Lakebase hop can't be MitM'd. Lakebase
+  # presents a publicly-trusted cert; stunnel validates against the system CA
+  # bundle (/etc/ssl/certs) + checkHost (see lib/stunnel.py).
+  - name: STUNNEL_VERIFY_CHAIN
+    value: "true"
+
   # DATABRICKS_WAREHOUSE_HTTP_PATH: enables the Databricks SQL warehouse
   # datasource (mullerpeter community plugin), authenticated via OAuth2 M2M
   # using the app SP's injected DATABRICKS_CLIENT_ID/SECRET. The SP needs

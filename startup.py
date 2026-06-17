@@ -100,32 +100,43 @@ PGB_RELAUNCH_WINDOW_S = 60
 PGB_LAUNCH_SETTLE_S = 0.5
 
 
-def write_server_cred(tok: str, ini_path: str, ini_lock: threading.Lock) -> None:
+def write_server_cred(tok: str, ini_path: str) -> None:
     """Rewrite the password= value on the [databases] connection string line.
 
-    This function is called by the refresher thread on every token rotation.
-    It rewrites only the password= field so as not to disturb other ini content.
-    The file permissions are preserved at 0600 (set at initial write; re-applied
-    here defensively in case an umask race widens them).
+    Called by the refresher thread (via the _write_server_cred closure) on every
+    token rotation. Rewrites only the password= field so as not to disturb other
+    ini content.
 
-    The ini_lock serialises this write against the supervisor's relaunch
-    re-render and shutdown teardown so the ini file is never read or written
-    mid-tear.
+    LOCKING: the CALLER must hold the ini lock. This function is intentionally
+    lock-free so the closure can update last_good_token in the SAME critical
+    section as the disk write (otherwise a concurrent relaunch could read a stale
+    token and overwrite the fresh one). The supervisor's relaunch/teardown paths
+    also hold that lock.
+
+    The write is ATOMIC: a 0600 temp file in the same directory is created and
+    then os.replace()d over the target, so the file is never briefly
+    world-readable and a reader never observes a torn file containing a partial
+    (or no) token.
     """
-    with ini_lock:
-        path = Path(ini_path)
-        content = path.read_text()
+    path = Path(ini_path)
+    content = path.read_text()
 
-        # Match the [databases] section line that contains password=<value>.
-        # The pattern targets only the password= token within the db connstring line.
-        new_content = re.sub(r"(password=)[^\s]+", rf"\g<1>{tok}", content, count=1)
+    # The [databases] line is rendered before [pgbouncer] and is the only line
+    # carrying a connstring password=, so the first match is the server token.
+    new_content, n = re.subn(r"(password=)[^\s]+", rf"\g<1>{tok}", content, count=1)
+    if n == 0:
+        # Do NOT leave a stale token silently in place — raise so the refresher
+        # logs it loudly and retries, rather than PgBouncer quietly using an
+        # expired credential until every connection fails.
+        raise RuntimeError(
+            f"write_server_cred: no password= found in {ini_path}; ini is "
+            "malformed — refusing to leave a stale token in place"
+        )
 
-        if new_content == content:
-            log.warning("write_server_cred: password= pattern not found in %s; "
-                        "ini may be malformed", ini_path)
-
-        path.write_text(new_content)
-        os.chmod(ini_path, 0o600)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(new_content)
+    os.chmod(tmp, 0o600)
+    os.replace(tmp, path)
 
 
 # ---------------------------------------------------------------------------
@@ -314,6 +325,13 @@ def main() -> None:
     # locally → anonymous-Admin fallback for the docker harness (no SSO proxy).
     auth_proxy = os.environ.get("GRAFANA_AUTH_PROXY", "false").lower() == "true"
     log.info("Grafana auth mode: %s", "SSO auth-proxy" if auth_proxy else "anonymous (local)")
+    # Safety net: anonymous-Admin must never run on a real Databricks App. The
+    # Apps runtime always injects DATABRICKS_APP_PORT, so its presence without
+    # auth_proxy means a misconfigured deploy (GRAFANA_AUTH_PROXY missing).
+    if not auth_proxy and os.environ.get("DATABRICKS_APP_PORT"):
+        log.warning("SECURITY: running anonymous-Admin inside a Databricks App "
+                    "(GRAFANA_AUTH_PROXY != 'true'). Set GRAFANA_AUTH_PROXY=true "
+                    "in app.yaml so auth comes from the SSO proxy.")
     grafana_env = {**os.environ, **build_env(
         app_port=cfg.app_port,
         pgbouncer_port=cfg.pgbouncer_port,
@@ -324,6 +342,12 @@ def main() -> None:
         provisioning_dir=str(Path(PROVISIONING_DIR).resolve()),
         auth_proxy=auth_proxy,
     )}
+    # Grafana reads the warehouse client secret from the provisioned datasource
+    # yaml (0600), so it does NOT need DATABRICKS_CLIENT_SECRET/ID in its
+    # environment. Strip them so a Grafana plugin or subprocess can't read the
+    # SP secret from /proc/self/environ.
+    for secret_key in ("DATABRICKS_CLIENT_SECRET", "DATABRICKS_CLIENT_ID"):
+        grafana_env.pop(secret_key, None)
     grafana_cmd = [f"{GRAFANA_HOME}/bin/grafana", "server", "--homepath", GRAFANA_HOME]
     log.info("Launching Grafana: %s", " ".join(grafana_cmd))
     grafana_proc = subprocess.Popen(grafana_cmd, env=grafana_env)
@@ -336,7 +360,12 @@ def main() -> None:
     ini_lock = threading.Lock()
 
     def _write_server_cred(tok: str) -> None:
-        write_server_cred(tok, PGBOUNCER_INI_PATH, ini_lock)
+        # Persist the token to the ini AND record it as last_good_token under
+        # the SAME ini_lock acquisition, so the on-disk token and the relaunch
+        # path's view of it can never diverge.
+        with ini_lock:
+            write_server_cred(tok, PGBOUNCER_INI_PATH)
+            state.last_good_token = tok
 
     def _reload() -> None:
         # Admin console auth: reload must authenticate AS the admin identity,
@@ -394,20 +423,24 @@ def main() -> None:
     stunnel_relaunch_times: list[float] = []
 
     def _terminate_children() -> None:
-        # Hold ini_lock so we don't race the refresher's write_server_cred.
+        # Signal the refresher to stop and briefly take ini_lock to ensure any
+        # in-flight write_server_cred has finished — but do NOT hold the lock
+        # across the blocking proc.wait() calls below (that could block the
+        # refresher for up to 15s). The stop_event prevents new writes.
+        stop_event.set()
         with ini_lock:
-            stop_event.set()
-            for name, proc in (("Grafana", grafana_proc),
-                               ("PgBouncer", pgb_state["proc"]),
-                               ("stunnel", stunnel_state["proc"])):
-                if proc.poll() is None:
-                    log.info("Terminating %s (pid=%d)", name, proc.pid)
-                    proc.terminate()
-                    try:
-                        proc.wait(timeout=5)
-                    except subprocess.TimeoutExpired:
-                        log.warning("%s did not exit cleanly; killing", name)
-                        proc.kill()
+            pass  # barrier: wait out any in-flight ini write, then release
+        for name, proc in (("Grafana", grafana_proc),
+                           ("PgBouncer", pgb_state["proc"]),
+                           ("stunnel", stunnel_state["proc"])):
+            if proc.poll() is None:
+                log.info("Terminating %s (pid=%d)", name, proc.pid)
+                proc.terminate()
+                try:
+                    proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    log.warning("%s did not exit cleanly; killing", name)
+                    proc.kill()
 
     def _relaunch_pgbouncer() -> subprocess.Popen:
         # Re-render ini with the last good token (NOT the boot token, which may

@@ -1,5 +1,6 @@
 from __future__ import annotations
 import os
+import re
 import subprocess
 
 def render_userlist(client_user: str, client_password: str) -> str:
@@ -41,11 +42,16 @@ logfile =
 pidfile = pgbouncer.pid
 """
 
-def scram_or_plain(_token: str) -> str:  # placeholder if client auth needs md5/scram tweaks
-    return "scram-sha-256"
-
 def launch(binary: str, ini_path: str) -> subprocess.Popen:
     return subprocess.Popen([binary, ini_path])
+
+
+def _redact_auth(text: str) -> str:
+    """Drop lines that may echo auth detail (password/SCRAM/auth exchanges) from
+    psql/PgBouncer output before it lands in logs or a raised exception."""
+    keep = [ln for ln in text.splitlines()
+            if not re.search(r"password|scram|authentication", ln, re.IGNORECASE)]
+    return " ".join(keep).strip()
 
 def reload(psql_binary: str, port: int, admin_user: str, admin_password: str,
            db_name: str) -> None:
@@ -71,10 +77,10 @@ def reload(psql_binary: str, port: int, admin_user: str, admin_password: str,
         env=env, capture_output=True, text=True,
     )
     if result.returncode != 0:
-        # Surface stderr/stdout — a swallowed reload error means the server
-        # token silently goes stale and every connection fails after the token
-        # TTL expires (~1h). Make the failure loud and diagnosable.
+        # Surface the failure (a swallowed reload error means the server token
+        # silently goes stale and every connection fails after the ~1h TTL), but
+        # redact any line that could echo auth detail to logs.
         raise RuntimeError(
             f"PgBouncer reload failed (exit {result.returncode}): "
-            f"stderr={result.stderr.strip()!r} stdout={result.stdout.strip()!r}"
+            f"stderr={_redact_auth(result.stderr)!r} stdout={_redact_auth(result.stdout)!r}"
         )
