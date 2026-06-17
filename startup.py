@@ -177,7 +177,20 @@ def main() -> None:
     from databricks.sdk import WorkspaceClient  # imported here: heavy; import-safe at module top
     client = WorkspaceClient()
 
-    # 2a. Stage the prebuilt binary bundle from a UC Volume if configured.
+    # 2a. Inject GF_SECURITY_SECRET_KEY from Databricks secret scope so Grafana
+    #     sessions survive container restarts. Soft-fail: if the secret doesn't
+    #     exist (local harness, fresh deploy before secret is created) Grafana
+    #     generates a random key at boot — sessions are just invalidated on restart.
+    try:
+        import base64
+        _secret_resp = client.secrets.get_secret(scope="grafana-app", key="grafana_secret_key")
+        if _secret_resp.value:
+            os.environ["GF_SECURITY_SECRET_KEY"] = base64.b64decode(_secret_resp.value).decode()
+            log.info("GF_SECURITY_SECRET_KEY loaded from secret scope 'grafana-app'")
+    except Exception as _e:
+        log.info("GF_SECURITY_SECRET_KEY not available (%s); Grafana will generate its own", _e)
+
+    # 2b. Stage the prebuilt binary bundle from a UC Volume if configured.
     #     Databricks Apps caps source files at 10 MB, far below the ~360 MB
     #     Grafana binary, so the bundle ships in a Volume and is downloaded +
     #     extracted into bin/ on cold start. Idempotent: a warm container with
@@ -192,7 +205,7 @@ def main() -> None:
     else:
         log.info("GRAFANA_BUNDLE_VOLUME_PATH unset; assuming bin/ is pre-staged")
 
-    # 2b. Prepend bin/lib/ to LD_LIBRARY_PATH so all child processes (pgbouncer,
+    # 2c. Prepend bin/lib/ to LD_LIBRARY_PATH so all child processes (pgbouncer,
     #     stunnel, psql) find their bundled shared libraries. Must happen AFTER
     #     staging (so bin/lib exists) and before any subprocess.Popen call.
     _prepend_lib_path()
